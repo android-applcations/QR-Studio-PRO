@@ -12,7 +12,8 @@
     "check:build": "node scripts/check-build.mjs",
     "verify": "npm run typecheck && npm run build && npm run check:build",
     "test:offline": "node scripts/offline-test.mjs",
-    "test:layout": "node scripts/mobile-layout-test.mjs"
+    "test:layout": "node scripts/mobile-layout-test.mjs",
+    "test:resilience": "node scripts/offline-resilience-test.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",

@@ -1,4 +1,4 @@
-import { Component, lazy, Suspense, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
+import { Component, Suspense, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
 import { Clock, HardDrive, LayoutTemplate, Library, Palette, QrCode, ScanLine, Settings, Sparkles } from "lucide-react";
 import type { SectionId } from "./core/types";
 import { T } from "./core/i18n";
@@ -9,29 +9,25 @@ import { ProjectProvider } from "./state/ProjectContext";
 import { cn } from "./utils/cn";
 import { playSound } from "./core/sound";
 import CreateScreen from "./components/CreateScreen";
+import DesignEditor from "./components/DesignEditor";
+import ScannerScreen from "./components/ScannerScreen";
+import LibraryScreen from "./components/LibraryScreen";
+import HistoryScreen from "./components/HistoryScreen";
+import TemplatesScreen from "./components/TemplatesScreen";
 import { ConfirmHost, IconBtn, Spinner, ToastHost } from "./components/ui";
 import { SettingsSheet } from "./components/SettingsSheet";
 import ConnectionStatus from "./components/ConnectionStatus";
 import InstallButton from "./components/InstallButton";
 
 /**
- * Lazily loaded screens. The loaders are kept in one place so the same chunks can
- * be warmed up in the background — every one of them is precached by the service
- * worker, so switching screens works with no network at all.
+ * Every screen ships inside the single app-shell bundle on purpose.
+ *
+ * They used to be `React.lazy()` chunks (~77 KB in total). Small, but it meant a
+ * screen could die while offline: if the browser evicted one chunk (it does that
+ * under storage pressure, and iOS Safari does it even sooner) that screen broke
+ * even though the app itself was cached and running. Shipping them in the shell
+ * makes offline honest and all-or-nothing — if the app boots, every screen works.
  */
-const SCREENS = {
-  design: () => import("./components/DesignEditor"),
-  scan: () => import("./components/ScannerScreen"),
-  library: () => import("./components/LibraryScreen"),
-  history: () => import("./components/HistoryScreen"),
-  templates: () => import("./components/TemplatesScreen"),
-} as const;
-
-const DesignEditor = lazy(SCREENS.design);
-const ScannerScreen = lazy(SCREENS.scan);
-const LibraryScreen = lazy(SCREENS.library);
-const HistoryScreen = lazy(SCREENS.history);
-const TemplatesScreen = lazy(SCREENS.templates);
 
 const NAV: { id: SectionId; label: readonly [string, string]; icon: typeof QrCode }[] = [
   { id: "create", label: T.create, icon: Sparkles },
@@ -98,38 +94,9 @@ function StorageChip() {
   );
 }
 
-/** Warm the lazy chunks in the background so every screen opens instantly (and offline). */
-function usePreloadScreens() {
-  useEffect(() => {
-    let cancelled = false;
-    const run = () => {
-      if (cancelled) return;
-      for (const load of Object.values(SCREENS)) void load().catch(() => {});
-    };
-    const w = window as Window & {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-      cancelIdleCallback?: (id: number) => void;
-    };
-    let id: number | undefined;
-    if (typeof w.requestIdleCallback === "function") {
-      id = w.requestIdleCallback(run, { timeout: 15000 });
-      return () => {
-        cancelled = true;
-        if (id != null) w.cancelIdleCallback?.(id);
-      };
-    }
-    id = window.setTimeout(run, 2000);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(id);
-    };
-  }, []);
-}
-
 function Shell() {
   const { t, lang, setLang, section, go, setSettingsOpen } = useApp();
   const [boundaryKey, setBoundaryKey] = useState(0);
-  usePreloadScreens();
 
   // Only the section change makes a sound: navigating is a distinct action.
   const navigate = (id: SectionId) => {

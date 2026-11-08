@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, Clipboard, Layers, Palette, Plus, Printer, Save, Search, Share2, Download, Sparkles } from "lucide-react";
 import type { QrCategoryId, QrTypeDef } from "../core/types";
 import { CATEGORIES, QR_TYPES, typesOfCategory } from "../core/qrTypes";
@@ -14,8 +14,7 @@ import { TypeForm } from "./TypeForm";
 import { Button, Empty, Field, IconBtn, inputCls, Spinner } from "./ui";
 import { ExportSheet } from "./ExportSheet";
 import { PrintSheet } from "./PrintSheet";
-
-const BatchPanel = lazy(() => import("./BatchPanel"));
+import BatchPanel from "./BatchPanel";
 
 // ---------- Type cards ----------
 const TypeCard = memo(function TypeCard({ def, onPick, big }: { def: QrTypeDef; onPick: (id: string, el: HTMLElement) => void; big?: boolean }) {

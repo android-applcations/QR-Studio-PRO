@@ -108,7 +108,15 @@ if (sw) {
     }
     const js = [...urls].filter((u) => u.endsWith(".js"));
     const css = [...urls].filter((u) => u.endsWith(".css"));
-    if (js.length < 5) fail(`only ${js.length} JS chunks are precached — lazy screens may fail offline`);
+    // Every JS file the build emitted must be precached. Bundling the screens
+    // into the app shell (instead of lazy-loading them) is what makes offline
+    // reliable, so a small number of chunks is good, not bad — but a file that
+    // is shipped and *not* cached is always a bug.
+    const shippedJs = distFiles.filter((f) => f.startsWith("assets/") && f.endsWith(".js") && f !== "sw.js");
+    const uncachedJs = shippedJs.filter((f) => !urls.has(f));
+    if (uncachedJs.length) fail(`JS files shipped but not precached: ${uncachedJs.join(", ")}`);
+    if (!js.length) fail("no JS is precached");
+    if (!css.length) fail("no CSS is precached");
     if (!css.length) fail("no CSS file is precached");
     ok(`precache covers ${js.length} JS chunks and ${css.length} CSS files`);
   }

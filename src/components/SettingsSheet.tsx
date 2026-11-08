@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Database, Download, FileUp, HardDrive, History, Info, Languages, Moon, Palette, RefreshCw, ScrollText, ShieldCheck, Sun, Trash2, Monitor, Volume2, Wifi } from "lucide-react";
+import { ChevronDown, CloudDownload, Database, Download, FileUp, HardDrive, History, Info, Languages, Moon, Palette, RefreshCw, ScrollText, ShieldCheck, Sun, Trash2, Monitor, Volume2, Wifi } from "lucide-react";
 import { PRIVACY, T, TERMS, formatBytes, formatDate, pick, type LegalDoc } from "../core/i18n";
 import type { Lang, ThemeMode } from "../core/types";
 import { DB_VERSION, clearHistory, exportBackup, importBackup, parseBackup, requestPersistence, storageEstimate, wipeAll, type ParsedBackup } from "../db/db";
@@ -49,7 +49,7 @@ function Legal({ doc, lang }: { doc: LegalDoc; lang: Lang }) {
 
 export function SettingsSheet() {
   const { t, lang, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, sounds, setSounds, settingsOpen, setSettingsOpen, toast, fail, confirm, bumpData, dataVersion } = useApp();
-  const { needRefresh, installed, swActive, updateNow, checkForUpdates } = usePwa();
+  const { needRefresh, installed, swActive, updateNow, checkForUpdates, offlineFiles, storagePersistent, ensureOffline, repairing, requestPersistence: persistStorage } = usePwa();
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
   const [parsed, setParsed] = useState<ParsedBackup | null>(null);
   const [busy, setBusy] = useState(false);
@@ -133,6 +133,7 @@ export function SettingsSheet() {
 
   const persist = async () => {
     const ok = await requestPersistence();
+    void persistStorage();
     toast(ok ? t(["Storage is now protected from automatic cleanup", "أصبح التخزين محمياً من التنظيف التلقائي"]) : t(["The browser did not grant persistent storage", "لم يمنح المتصفح تخزيناً دائماً"]), ok ? "ok" : "info");
   };
 
@@ -189,6 +190,70 @@ export function SettingsSheet() {
                   ],
                 )}
               </p>
+              {/* Honest offline status: how many of the files the app needs are
+                  really on this device right now, verified by the service worker. */}
+              <div className="rounded-xl border border-line bg-surface2/40 p-3">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="flex items-center gap-1.5 text-muted">
+                    {offlineFiles && offlineFiles.missing === 0 ? (
+                      <ShieldCheck size={14} className="text-brand" />
+                    ) : (
+                      <CloudDownload size={14} />
+                    )}
+                    {t(["Offline files", "ملفات دون إنترنت"])}
+                  </span>
+                  <span dir="ltr" className="tabular-nums">
+                    {offlineFiles
+                      ? offlineFiles.missing === 0
+                        ? `${offlineFiles.total} / ${offlineFiles.total}`
+                        : `${offlineFiles.total - offlineFiles.missing} / ${offlineFiles.total}`
+                      : t(["checking…", "جارٍ الفحص…"])}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-muted">
+                  {!offlineFiles
+                    ? t(["Verifying the offline copy…", "جارٍ التحقق من النسخة المحفوظة…"])
+                    : offlineFiles.missing === 0
+                      ? t(
+                          [
+                            "Every file the app needs is on this device, so it opens and works with no connection.",
+                            "كل ملفات التطبيق موجودة على جهازك، فيفتح ويعمل بدون اتصال.",
+                          ],
+                        )
+                      : t(
+                          [
+                            "Some files are missing. Reconnect once and the app re-downloads them by itself.",
+                            "بعض الملفات مفقودة. اتصل بالإنترنت مرة واحدة وسيُعيد التطبيق تنزيلها تلقائياً.",
+                          ],
+                        )}
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button
+                    disabled={repairing}
+                    onClick={() => void ensureOffline()}
+                    icon={<CloudDownload size={16} />}
+                  >
+                    {repairing
+                      ? t(["Downloading…", "جارٍ التنزيل…"])
+                      : t(["Download for offline", "تنزيل للعمل دون إنترنت"])}
+                  </Button>
+                  {storagePersistent === false && navigator.onLine && (
+                    <button type="button" onClick={() => void persist()} className="press min-h-9 text-xs text-brand">
+                      {t(["Keep it on this device", "تثبيتها على الجهاز"])}
+                    </button>
+                  )}
+                </div>
+                {storagePersistent === true && (
+                  <p className="mt-1.5 text-xs text-muted">
+                    {t(
+                      [
+                        "This device promised to keep the offline copy and your data, even when storage runs low.",
+                        "وعد هذا الجهاز بالحفاظ على النسخة دون إنترنت وعلى بياناتك حتى عند امتلاء الذاكرة.",
+                      ],
+                    )}
+                  </p>
+                )}
+              </div>
               <p className="text-xs text-muted" dir="ltr">
                 {swActive
                   ? installed
