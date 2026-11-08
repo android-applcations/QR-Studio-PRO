@@ -159,17 +159,6 @@ async function ensureOfflineAssets(): Promise<OfflineStatus> {
   return { total: urls.length, missing, repaired, broken: missing - repaired };
 }
 
-async function reportOfflineStatus(): Promise<OfflineStatus> {
-  const status = await ensureOfflineAssets();
-  try {
-    const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    for (const client of clients) client.postMessage({ type: "OFFLINE_STATUS", status });
-  } catch {
-    /* nothing to report to */
-  }
-  return status;
-}
-
 // ---------------------------------------------------------------------------
 // Updates are explicit (registerType: "prompt"): a new worker waits until the
 // user presses "Update now", so an in-flight save can never be interrupted.
@@ -213,8 +202,8 @@ self.addEventListener("activate", (event) => {
       // Take control of the very first page immediately, so a first-time visitor
       // is already protected before they navigate anywhere.
       await self.clients.claim();
-      // Top up anything the browser evicted, then tell the app how it went.
-      await reportOfflineStatus();
+      // Top up anything the browser evicted since the last visit.
+      await ensureOfflineAssets();
     })(),
   );
 });

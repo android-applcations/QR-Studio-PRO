@@ -322,24 +322,6 @@ export function describeScan(content: string, typeId: string): ScanField[] {
   return fields;
 }
 
-/** The password of a Wi-Fi code, for "connect to network". Empty when open. */
-export function wifiPassword(content: string): string {
-  try {
-    return unescWifi(wifiParts(content).P || "");
-  } catch {
-    return "";
-  }
-}
-
-/** The network name of a Wi-Fi code. */
-export function wifiSsid(content: string): string {
-  try {
-    return unescWifi(wifiParts(content).S || "");
-  } catch {
-    return "";
-  }
-}
-
 /** Does this scan contain something that should stay hidden until asked? */
 export function hasSecretField(fields: ScanField[]): boolean {
   return fields.some((f) => f.secret && (f.value || "").length > 0);
