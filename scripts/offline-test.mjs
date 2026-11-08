@@ -524,9 +524,15 @@ try {
     await fileInput.uploadFile(sampleFile);
     scanned = await hasText("Code detected", 25000);
     if (scanned) {
+      // The result is shown as labelled <dl> rows now, not as a raw paragraph.
       const decoded = await page.evaluate(() => {
-        const p = [...document.querySelectorAll("p")].map((e) => e.innerText || "");
-        return p.find((t) => t.includes("http")) ?? "";
+        const values = [...document.querySelectorAll("dl > div")]
+          .filter((row) => {
+            const r = row.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          })
+          .map((row) => row.querySelector("dd")?.textContent || "");
+        return values.find((t) => t.includes("http")) ?? (document.body.innerText || "").match(/https?:\S+/)?.[0] ?? "";
       });
       scanned = !!encoded && decoded.includes(encoded);
       if (!scanned) note(`scan decoded "${decoded.slice(0, 80)}" (expected "${encoded.slice(0, 80)}")`);
