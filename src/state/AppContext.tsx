@@ -16,6 +16,7 @@ function initialSection(): SectionId {
 import { pick } from "../core/i18n";
 import { addHistory, describeError, putSetting } from "../db/db";
 import { redactForLog } from "../core/qrTypes";
+import { playSound, setSoundEnabled } from "../core/sound";
 
 export interface Toast {
   id: number;
@@ -41,6 +42,9 @@ interface Ctx {
   setSaveHistory: (v: boolean) => void;
   autoSave: boolean;
   setAutoSave: (v: boolean) => void;
+  /** light UI feedback sounds (never musical) */
+  sounds: boolean;
+  setSounds: (v: boolean) => void;
   t: (tx: Tx) => string;
   section: SectionId;
   go: (s: SectionId) => void;
@@ -71,6 +75,7 @@ export function AppProvider({ initial, children }: { initial: Record<string, unk
   const [theme, setThemeState] = useState<ThemeMode>(["dark", "light", "system"].includes(initial.theme as string) ? (initial.theme as ThemeMode) : "dark");
   const [saveHistory, setSaveHistoryState] = useState(initial.saveHistory !== false);
   const [autoSave, setAutoSaveState] = useState(initial.autoSave === true);
+  const [sounds, setSoundsState] = useState(initial.sounds !== false);
   const [section, setSection] = useState<SectionId>(initialSection);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -90,6 +95,12 @@ export function AppProvider({ initial, children }: { initial: Record<string, unk
   const setTheme = useCallback((m: ThemeMode) => { setThemeState(m); persist("theme", m); }, [persist]);
   const setSaveHistory = useCallback((v: boolean) => { setSaveHistoryState(v); persist("saveHistory", v); }, [persist]);
   const setAutoSave = useCallback((v: boolean) => { setAutoSaveState(v); persist("autoSave", v); }, [persist]);
+  const setSounds = useCallback((v: boolean) => { setSoundsState(v); persist("sounds", v); }, [persist]);
+
+  // Keep the audio engine in sync with the setting (and mute it immediately).
+  useEffect(() => {
+    setSoundEnabled(sounds);
+  }, [sounds]);
 
   const dir = lang === "ar" ? "rtl" : "ltr";
   const t = useCallback((tx: Tx) => pick(lang, tx), [lang]);
@@ -118,6 +129,7 @@ export function AppProvider({ initial, children }: { initial: Record<string, unk
   const toast = useCallback<Ctx["toast"]>((msg, kind = "ok", action) => {
     const id = ++toastId.current;
     const text = typeof msg === "string" ? msg : pick(lang, msg);
+    playSound(kind === "err" ? "err" : "ok");
     setToasts((l) => [...l.slice(-2), { id, kind, msg: text, action }]);
     setTimeout(() => setToasts((l) => l.filter((x) => x.id !== id)), action ? 7000 : 3200);
   }, [lang]);
@@ -157,10 +169,10 @@ export function AppProvider({ initial, children }: { initial: Record<string, unk
   }, [bumpData]);
 
   const value = useMemo<Ctx>(() => ({
-    lang, dir, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, t,
+    lang, dir, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, sounds, setSounds, t,
     section, go, settingsOpen, setSettingsOpen, toast, toasts, dismissToast, fail, confirm, confirmState,
     logActivity, dataVersion, bumpData,
-  }), [lang, dir, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, t, section, go, settingsOpen, toast, toasts, dismissToast, fail, confirm, confirmState, logActivity, dataVersion, bumpData]);
+  }), [lang, dir, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, sounds, setSounds, t, section, go, settingsOpen, toast, toasts, dismissToast, fail, confirm, confirmState, logActivity, dataVersion, bumpData]);
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }

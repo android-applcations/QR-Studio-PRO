@@ -21,7 +21,9 @@ const Card = memo(function Card({ rec, logo, selected, selecting, onOpen, onTogg
   const { t, lang } = useApp();
   const def = TYPE_BY_ID[rec.type] ?? TYPE_BY_ID.raw;
   return (
-    <div className={cn("cv-card card relative flex gap-3 p-2.5", selected && "!border-brand ring-2 ring-brand/40")}>
+    // `min-w-0` keeps the grid column from being stretched by the (nowrap) card text,
+    // which used to push cards far past the width of a phone screen.
+    <div className={cn("cv-card card relative flex min-w-0 gap-3 p-2.5", selected && "!border-brand ring-2 ring-brand/40")}>
       <button type="button" onClick={() => (selecting ? onSelect(rec) : onOpen(rec))} className="press flex min-w-0 flex-1 items-center gap-3 text-start" aria-label={rec.name}>
         <div className="relative h-[72px] w-[72px] shrink-0 overflow-hidden rounded-xl bg-white p-1">
           <QrImage content={rec.content} design={rec.design_config} logoHref={logo} className="h-full w-full" />

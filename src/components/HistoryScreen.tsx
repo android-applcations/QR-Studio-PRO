@@ -25,7 +25,9 @@ const Row = memo(function Row({ rec, onReuse, onCopy, onDelete }: { rec: History
   const a = ACTIONS[rec.action] ?? ACTIONS.scan;
   const redacted = rec.content.includes("••••") || rec.content.startsWith("EPC (hidden)") || rec.content.startsWith("batch #") || rec.content.startsWith("ZIP (");
   return (
-    <div className="cv-card card flex items-center gap-3 p-3">
+    // `min-w-0` keeps the grid column from being stretched by the nowrap content,
+    // which used to push rows far past the width of a phone screen.
+    <div className="cv-card card flex min-w-0 items-center gap-3 p-3">
       <TypeIcon icon={def.icon} size={42} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
@@ -92,11 +94,14 @@ export default function HistoryScreen() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 space-y-2 px-3 pb-2 pt-3 md:px-5">
-        <div className="no-scrollbar -mx-3 flex gap-2 overflow-x-auto px-3 md:mx-0 md:px-0">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
           {statItems.map((s) => (
-            <div key={s.label} className="card flex min-w-[92px] shrink-0 flex-1 items-center gap-2 px-3 py-2">
-              <s.icon size={18} className="text-brand" />
-              <div><p className="text-lg font-bold leading-5 tabular-nums">{s.v}</p><p className="text-[11px] text-muted">{s.label}</p></div>
+            <div key={s.label} className="card flex min-w-0 items-center gap-2 px-2.5 py-2">
+              <s.icon size={18} className="shrink-0 text-brand" />
+              <div className="min-w-0">
+                <p className="truncate text-lg font-bold leading-5 tabular-nums">{s.v}</p>
+                <p className="truncate text-[11px] text-muted">{s.label}</p>
+              </div>
             </div>
           ))}
         </div>
@@ -109,15 +114,15 @@ export default function HistoryScreen() {
           <IconBtn label={t(["Clear history", "مسح السجل"])} onClick={onClear} disabled={!data.length}><Trash2 size={20} /></IconBtn>
         </div>
         <div className="grid grid-cols-3 gap-2">
-          <select aria-label={t(["Operation", "العملية"])} value={action} onChange={(e) => setAction(e.target.value)} className="min-h-10 rounded-xl border border-line bg-surface2 px-2 text-[13px]">
+          <select aria-label={t(["Operation", "العملية"])} value={action} onChange={(e) => setAction(e.target.value)} className="min-h-10 w-full min-w-0 truncate rounded-xl border border-line bg-surface2 px-2 text-[13px]">
             <option value="all">{t(["All operations", "كل العمليات"])}</option>
             {(Object.keys(ACTIONS) as (keyof typeof ACTIONS)[]).map((k) => <option key={k} value={k}>{t(ACTIONS[k].label)}</option>)}
           </select>
-          <select aria-label={t(T.type)} value={typeF} onChange={(e) => setTypeF(e.target.value)} className="min-h-10 rounded-xl border border-line bg-surface2 px-2 text-[13px]">
+          <select aria-label={t(T.type)} value={typeF} onChange={(e) => setTypeF(e.target.value)} className="min-h-10 w-full min-w-0 truncate rounded-xl border border-line bg-surface2 px-2 text-[13px]">
             <option value="all">{t(["All types", "كل الأنواع"])}</option>
             {types.map((ty) => <option key={ty} value={ty}>{t((TYPE_BY_ID[ty] ?? TYPE_BY_ID.text).title)}</option>)}
           </select>
-          <select aria-label={t(T.date)} value={dateF} onChange={(e) => setDateF(e.target.value as DateF)} className="min-h-10 rounded-xl border border-line bg-surface2 px-2 text-[13px]">
+          <select aria-label={t(T.date)} value={dateF} onChange={(e) => setDateF(e.target.value as DateF)} className="min-h-10 w-full min-w-0 truncate rounded-xl border border-line bg-surface2 px-2 text-[13px]">
             <option value="all">{t(["Any date", "أي تاريخ"])}</option>
             <option value="today">{t(T.today)}</option>
             <option value="week">{t(T.week)}</option>
