@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Camera, CameraOff, Check, Clipboard, ExternalLink, Eye, EyeOff, ImageUp, Pause, Play, RefreshCw, Save, Share2, ShieldAlert, Sparkles, Zap, ZapOff } from "lucide-react";
+import { Camera, CameraOff, Check, Clipboard, ExternalLink, Eye, EyeOff, ImageUp, Pause, Play, RefreshCw, Save, Share2, ShieldAlert, Sparkles, Wifi, Zap, ZapOff } from "lucide-react";
 import { detectType, TYPE_BY_ID } from "../core/qrTypes";
 import { analyzeLink } from "../core/security";
 import { openExternal, watchHandoff } from "../core/openExternal";
+import { describeScan, hasSecretField, wifiPassword, wifiSsid } from "../core/scanView";
 import { T } from "../core/i18n";
 import { addHistory } from "../db/db";
 import { redactForLog } from "../core/qrTypes";
@@ -16,10 +17,6 @@ import { Button, IconBtn, Notice, Spinner } from "./ui";
 
 type Status = "starting" | "live" | "stopped" | "error";
 
-function maskWifi(content: string): string {
-  return content.replace(/P:((?:\\.|[^;])*);/, "P:••••••;");
-}
-
 function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void }) {
   const { t, toast, fail, confirm, go, saveHistory, bumpData } = useApp();
   const { loadRaw } = useProject();
@@ -31,6 +28,10 @@ function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void 
   const def = TYPE_BY_ID[typeId] ?? TYPE_BY_ID.text;
   const link = useMemo(() => analyzeLink(content), [content]);
   const isWifi = typeId === "wifi";
+  // The parsed, ordered view of whatever was scanned — the same layout for every
+  // type, instead of printing the raw QR string.
+  const fields = useMemo(() => describeScan(content, typeId), [content, typeId]);
+  const canReveal = hasSecretField(fields);
 
   useEffect(() => { setSaved(saveHistory); setReveal(false); }, [content, saveHistory]);
 
@@ -79,6 +80,36 @@ function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void 
       });
     }
   };
+  /**
+   * Wi-Fi only. No web page can join a network on the user's behalf, so this
+   * does the two things that actually help: put the password on the clipboard
+   * and open the device's Wi-Fi settings, where it can be pasted.
+   */
+  const onConnectWifi = async () => {
+    const password = wifiPassword(content);
+    const ssid = wifiSsid(content);
+    try {
+      await copyText(password || ssid);
+    } catch {
+      /* clipboard unavailable — the settings still open */
+    }
+    const android = /android/i.test(navigator.userAgent);
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    if (android) openExternal("intent:#Intent;action=android.settings.WIFI;end");
+    else if (ios) openExternal("App-Prefs:WIFI");
+    toast(
+      password
+        ? t([
+            "Password copied — pick the network in the Wi-Fi settings and paste it.",
+            "نُسخت كلمة المرور — اختر الشبكة في إعدادات Wi-Fi والصقها.",
+          ])
+        : t([
+            "This network has no password. Pick it in the Wi-Fi settings.",
+            "هذه الشبكة بدون كلمة مرور. اخترها من إعدادات Wi-Fi.",
+          ]),
+      "info",
+    );
+  };
   const onSave = async () => {
     try {
       await addHistory({ action: "scan", type: typeId, content: redactForLog(typeId, content), scanned_at: Date.now() });
@@ -109,8 +140,20 @@ function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void 
       )}
       <div className="scroll-area min-h-0 flex-1 space-y-2.5 px-3 py-3">
         <div className="rounded-xl border border-line bg-surface2/60 p-3">
-          <p className="max-h-40 overflow-auto whitespace-pre-wrap break-all text-sm leading-6" dir="auto">{isWifi && !reveal ? maskWifi(content) : content}</p>
-          {isWifi && (
+          <dl className="max-h-56 space-y-2 overflow-auto">
+            {fields.map((f, i) => (
+              <div key={i} className="flex items-start justify-between gap-3 border-b border-line/50 pb-2 last:border-0 last:pb-0">
+                <dt className="shrink-0 text-xs text-muted">{t(f.label)}</dt>
+                <dd
+                  dir={f.ltr ? "ltr" : "auto"}
+                  className={cn("min-w-0 break-all text-end text-sm font-medium", f.multiline && "whitespace-pre-wrap")}
+                >
+                  {f.secret && !reveal ? "••••••••" : f.valueTx ? t(f.valueTx) : f.value || "—"}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          {canReveal && (
             <button type="button" onClick={() => setReveal((v) => !v)} className="press mt-1 inline-flex min-h-9 items-center gap-1.5 text-xs text-brand">
               {reveal ? <EyeOff size={14} /> : <Eye size={14} />}{reveal ? t(["Hide password", "إخفاء كلمة المرور"]) : t(["Show password", "إظهار كلمة المرور"])}
             </button>
@@ -127,6 +170,11 @@ function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void 
         <p className="text-[11px] text-muted">{t(["Links are never opened automatically.", "لا يتم فتح الروابط تلقائياً."])}</p>
       </div>
       <div className="grid shrink-0 grid-cols-4 gap-1.5 border-t border-line p-2.5">
+        {isWifi && (
+          <Button size="sm" variant="primary" onClick={onConnectWifi} icon={<Wifi size={16} />} className="col-span-4">
+            {t(["Connect to network", "الاتصال بالشبكة"])}
+          </Button>
+        )}
         <Button size="sm" onClick={onCopy} icon={<Clipboard size={16} />} className="col-span-2">{t(T.copy)}</Button>
         <Button size="sm" onClick={onShare} icon={<Share2 size={16} />} className="col-span-2">{t(T.share)}</Button>
         {link.openable && <Button size="sm" variant="soft" onClick={onOpen} icon={<ExternalLink size={16} />} className="col-span-2">{t(T.open)}</Button>}

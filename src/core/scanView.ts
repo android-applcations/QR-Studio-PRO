@@ -1,0 +1,346 @@
+import type { Tx } from "./types";
+
+/**
+ * Turn raw scanned content into an ordered list of labelled fields.
+ *
+ * A QR code stores one flat string, and printing that string is what made the
+ * Wi-Fi result look like noise: `WIFI:T:WPA;S:Home;P:••••;;`. Every type now
+ * gets the same treatment — its string is parsed back into the fields the user
+ * actually cares about and rendered as a tidy list. Types with no structure
+ * (plain text and friends) simply get one "Content" row, so the layout stays
+ * identical everywhere.
+ */
+
+export interface ScanField {
+  /** bilingual label, rendered muted */
+  label: Tx;
+  /** plain value, shown as-is */
+  value?: string;
+  /** translated value — use this when the value itself needs localising */
+  valueTx?: Tx;
+  /** render left-to-right: numbers, ids, addresses, URLs */
+  ltr?: boolean;
+  /** hidden behind the reveal toggle (passwords) */
+  secret?: boolean;
+  /** may wrap over several lines */
+  multiline?: boolean;
+}
+
+const L = {
+  network: ["Network name (SSID)", "اسم الشبكة (SSID)"],
+  password: ["Password", "كلمة المرور"],
+  security: ["Security", "الحماية"],
+  hidden: ["Hidden network", "شبكة مخفية"],
+  name: ["Name", "الاسم"],
+  company: ["Company", "الشركة"],
+  job: ["Job title", "المسمى الوظيفي"],
+  phone: ["Phone", "الهاتف"],
+  mobile: ["Mobile", "الجوال"],
+  work: ["Work", "العمل"],
+  email: ["Email", "البريد الإلكتروني"],
+  website: ["Website", "الموقع"],
+  address: ["Address", "العنوان"],
+  note: ["Note", "ملاحظة"],
+  event: ["Event", "المناسبة"],
+  starts: ["Starts", "البداية"],
+  ends: ["Ends", "النهاية"],
+  location: ["Location", "الموقع"],
+  coordinates: ["Coordinates", "الإحداثيات"],
+  link: ["Link", "الرابط"],
+  to: ["To", "إلى"],
+  subject: ["Subject", "الموضوع"],
+  message: ["Message", "الرسالة"],
+  number: ["Number", "الرقم"],
+  amount: ["Amount", "المبلغ"],
+  currency: ["Currency", "العملة"],
+  addressWallet: ["Wallet address", "عنوان المحفظة"],
+  upiId: ["UPI ID", "معرّف UPI"],
+  payee: ["Payee", "المستفيد"],
+  reference: ["Reference", "المرجع"],
+  beneficiary: ["Beneficiary", "اسم المستفيد"],
+  iban: ["IBAN", "رقم الآيبان"],
+  content: ["Content", "المحتوى"],
+  uri: ["Link / URI", "الرابط / URI"],
+} satisfies Record<string, Tx>;
+
+const SECURITY: Record<string, Tx> = {
+  WPA: ["WPA / WPA2 / WPA3", "WPA / WPA2 / WPA3"],
+  WEP: ["WEP", "WEP"],
+  nopass: ["No password", "بدون كلمة مرور"],
+};
+
+const YES: Tx = ["Yes", "نعم"];
+const NO: Tx = ["No", "لا"];
+
+/** Wi-Fi values escape `\ ; , : "` with a backslash (see `escWifi`). */
+const unescWifi = (s: string) => s.replace(/\\([\\;,:"])/g, "$1");
+const unescVcard = (s: string) => s.replace(/\\([\\;,:])/g, "$1").replace(/\\n/gi, "\n");
+
+/** Split `WIFI:T:WPA;S:x;P:y;H:true;;` into its key/value pairs. */
+function wifiParts(content: string): Record<string, string> {
+  const body = content.replace(/^WIFI:/i, "");
+  const out: Record<string, string> = {};
+  // A `\` escapes the next character, so it may not end a value.
+  for (const m of body.matchAll(/([A-Za-z]+):((?:\\.|[^;])*)(?:;|$)/g)) {
+    out[m[1].toUpperCase()] = m[2];
+  }
+  return out;
+}
+
+/** Read one property out of a vCard, keeping every occurrence. */
+function vcardProps(content: string, name: string): string[] {
+  const out: string[] = [];
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.trim();
+    const m = new RegExp(`^${name}[^:]*:(.*)$`, "i").exec(line);
+    if (m) out.push(unescVcard(m[1]));
+  }
+  return out.filter(Boolean);
+}
+
+/** `ADR;TYPE=WORK:;;street;;;;` → "street". */
+function cleanAdr(v: string): string {
+  return v
+    .split(";")
+    .map((p) => unescVcard(p).trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+/** 20260131T120000 / 20260131 → something a human can read. */
+function prettyIcsDate(v: string): string {
+  const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2}))?/.exec(v.trim());
+  if (!m) return v.trim();
+  const [, y, mo, d, h, mi] = m;
+  const date = `${y}/${mo}/${d}`;
+  return h ? `${date} ${h}:${mi ?? "00"}` : date;
+}
+
+function queryOf(uri: string): URLSearchParams {
+  const i = uri.indexOf("?");
+  return new URLSearchParams(i < 0 ? "" : uri.slice(i + 1));
+}
+
+function wifiFields(content: string): ScanField[] {
+  const p = wifiParts(content);
+  const sec = (p.T || "WPA").toUpperCase();
+  const fields: ScanField[] = [
+    { label: L.network, value: unescWifi(p.S || ""), ltr: true },
+  ];
+  if (sec !== "NOPASS") {
+    fields.push({ label: L.password, value: unescWifi(p.P || ""), secret: true, ltr: true });
+  }
+  fields.push({ label: L.security, valueTx: SECURITY[sec] ?? [sec, sec], ltr: true });
+  fields.push({ label: L.hidden, valueTx: /^true$/i.test(p.H || "") ? YES : NO, ltr: true });
+  return fields;
+}
+
+function vcardFields(content: string): ScanField[] {
+  const out: ScanField[] = [];
+  const name = vcardProps(content, "FN")[0] ?? vcardProps(content, "N")[0];
+  if (name) out.push({ label: L.name, value: name });
+  const org = vcardProps(content, "ORG")[0];
+  if (org) out.push({ label: L.company, value: org });
+  const title = vcardProps(content, "TITLE")[0];
+  if (title) out.push({ label: L.job, value: title });
+  const tels = vcardProps(content, "TEL");
+  tels.forEach((tel, i) => out.push({ label: tels.length > 1 ? [`Phone ${i + 1}`, `هاتف ${i + 1}`] : L.phone, value: tel, ltr: true }));
+  const emails = vcardProps(content, "EMAIL");
+  emails.forEach((e, i) => out.push({ label: emails.length > 1 ? [`Email ${i + 1}`, `بريد ${i + 1}`] : L.email, value: e, ltr: true }));
+  const url = vcardProps(content, "URL")[0];
+  if (url) out.push({ label: L.website, value: url, ltr: true });
+  const adr = vcardProps(content, "ADR")[0];
+  if (adr && cleanAdr(adr)) out.push({ label: L.address, value: cleanAdr(adr) });
+  const note = vcardProps(content, "NOTE")[0];
+  if (note) out.push({ label: L.note, value: note, multiline: true });
+  return out;
+}
+
+function eventFields(content: string): ScanField[] {
+  const out: ScanField[] = [];
+  const read = (k: string) => {
+    const m = new RegExp(`^${k}[^:]*:(.*)$`, "mi").exec(content);
+    return m ? m[1].trim() : "";
+  };
+  const title = read("SUMMARY");
+  if (title) out.push({ label: L.event, value: title });
+  const start = read("DTSTART");
+  if (start) out.push({ label: L.starts, value: prettyIcsDate(start), ltr: true });
+  const end = read("DTEND");
+  if (end) out.push({ label: L.ends, value: prettyIcsDate(end), ltr: true });
+  const loc = read("LOCATION");
+  if (loc) out.push({ label: L.location, value: loc.replace(/\\n/g, " ") });
+  const desc = read("DESCRIPTION");
+  if (desc) out.push({ label: L.note, value: desc.replace(/\\n/g, " "), multiline: true });
+  return out;
+}
+
+function emailFields(content: string): ScanField[] {
+  // Two shapes: mailto:to?subject=… and MATMSG:TO:x;SUB:y;BODY:z;;
+  if (/^MATMSG:/i.test(content)) {
+    const out: ScanField[] = [];
+    const get = (k: string) => {
+      const m = new RegExp(`${k}:((?:\\\\.|[^;])*)(?:;|$)`, "i").exec(content);
+      return m ? m[1].replace(/\\([\\;,:])/g, "$1") : "";
+    };
+    const to = get("TO");
+    if (to) out.push({ label: L.to, value: to, ltr: true });
+    const sub = get("SUB");
+    if (sub) out.push({ label: L.subject, value: sub });
+    const body = get("BODY");
+    if (body) out.push({ label: L.message, value: body, multiline: true });
+    return out;
+  }
+  const out: ScanField[] = [];
+  const i = content.indexOf("?");
+  const to = decodeURIComponent(content.slice(0, i < 0 ? undefined : i).replace(/^mailto:/i, ""));
+  if (to) out.push({ label: L.to, value: to, ltr: true });
+  const q = queryOf(content);
+  const subject = q.get("subject");
+  if (subject) out.push({ label: L.subject, value: subject });
+  const body = q.get("body");
+  if (body) out.push({ label: L.message, value: body, multiline: true });
+  return out;
+}
+
+function smsFields(content: string): ScanField[] {
+  // SMSTO:number:body   |   sms:number?body=text
+  const m = /^(?:smsto|sms|mms):([^:?]*)(?::([\s\S]*))?$/i.exec(content.trim());
+  if (!m) return [];
+  const out: ScanField[] = [];
+  if (m[1]) out.push({ label: L.number, value: m[1], ltr: true });
+  const q = queryOf(content);
+  const body = m[2] ?? q.get("body") ?? "";
+  if (body) out.push({ label: L.message, value: body, multiline: true });
+  return out;
+}
+
+function locationFields(content: string): ScanField[] {
+  const m = /^geo:([^,;?]+),([^,;?]+)/i.exec(content.trim());
+  if (!m) return [];
+  return [{ label: L.coordinates, value: `${(+m[1]).toFixed(5)}, ${(+m[2]).toFixed(5)}`, ltr: true }];
+}
+
+function cryptoFields(content: string): ScanField[] {
+  const m = /^([a-z]+):([^?]+)(\?([\s\S]*))?$/i.exec(content.trim());
+  if (!m) return [];
+  const out: ScanField[] = [{ label: L.addressWallet, value: m[2], ltr: true }];
+  const q = queryOf(content);
+  const amount = q.get("amount") ?? q.get("value");
+  if (amount) out.push({ label: L.amount, value: amount, ltr: true });
+  return out;
+}
+
+function upiFields(content: string): ScanField[] {
+  const q = queryOf(content);
+  const out: ScanField[] = [];
+  const pa = q.get("pa");
+  if (pa) out.push({ label: L.upiId, value: pa, ltr: true });
+  const pn = q.get("pn");
+  if (pn) out.push({ label: L.payee, value: pn, ltr: true });
+  const am = q.get("am");
+  if (am) out.push({ label: L.amount, value: am, ltr: true });
+  const tn = q.get("tn");
+  if (tn) out.push({ label: L.reference, value: tn });
+  return out;
+}
+
+/** EPC QR: line-based, `BCD` then version, charset, id, name, iban, amount… */
+function epcFields(content: string): ScanField[] {
+  const lines = content.split(/\r?\n/);
+  const at = (i: number) => (lines[i] ?? "").trim();
+  const out: ScanField[] = [];
+  if (at(4)) out.push({ label: L.beneficiary, value: at(4) });
+  if (at(5)) out.push({ label: L.iban, value: at(5), ltr: true });
+  const amount = at(6).replace(/^EUR/, "");
+  if (amount) out.push({ label: L.amount, value: `${amount} ${at(7) || "EUR"}`, ltr: true });
+  if (at(8)) out.push({ label: L.reference, value: at(8) });
+  return out;
+}
+
+/**
+ * Describe scanned content as an ordered list of fields.
+ * Always returns at least one row, so the result view never looks empty.
+ */
+export function describeScan(content: string, typeId: string): ScanField[] {
+  const s = (content ?? "").trim();
+  if (!s) return [{ label: L.content, value: "", multiline: true }];
+
+  let fields: ScanField[] = [];
+  try {
+    switch (typeId) {
+      case "wifi":
+        fields = wifiFields(s);
+        break;
+      case "vcard":
+      case "contact":
+        fields = vcardFields(s);
+        break;
+      case "event":
+        fields = eventFields(s);
+        break;
+      case "email":
+        fields = emailFields(s);
+        break;
+      case "phone":
+        fields = [{ label: L.number, value: s.replace(/^tel:/i, ""), ltr: true }];
+        break;
+      case "sms":
+        fields = smsFields(s);
+        break;
+      case "location":
+        fields = locationFields(s);
+        break;
+      case "crypto":
+        fields = cryptoFields(s);
+        break;
+      case "upi":
+        fields = upiFields(s);
+        break;
+      case "epc":
+        fields = epcFields(s);
+        break;
+      default:
+        fields = [];
+    }
+  } catch {
+    fields = [];
+  }
+
+  // Nothing parsed (or the type has no structure): show it as content, so the
+  // layout is identical for every type.
+  if (!fields.length) {
+    fields = [
+      {
+        label: /^(https?|mailto|tel):/i.test(s) || /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? L.uri : L.content,
+        value: s,
+        ltr: true,
+        multiline: true,
+      },
+    ];
+  }
+  return fields;
+}
+
+/** The password of a Wi-Fi code, for "connect to network". Empty when open. */
+export function wifiPassword(content: string): string {
+  try {
+    return unescWifi(wifiParts(content).P || "");
+  } catch {
+    return "";
+  }
+}
+
+/** The network name of a Wi-Fi code. */
+export function wifiSsid(content: string): string {
+  try {
+    return unescWifi(wifiParts(content).S || "");
+  } catch {
+    return "";
+  }
+}
+
+/** Does this scan contain something that should stay hidden until asked? */
+export function hasSecretField(fields: ScanField[]): boolean {
+  return fields.some((f) => f.secret && (f.value || "").length > 0);
+}
