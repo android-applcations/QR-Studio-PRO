@@ -308,30 +308,50 @@ try {
   check("WhatsApp button uses target=_blank", waApp?.target === "_blank", `target="${waApp?.target}"`);
 
   // ---------------------------------------------------------------- deep links
-  // A link that belongs to an app must be tried in that app first, and fall back
-  // to the browser when the device has no app that answers.
+  // A link that belongs to an app must be handed over in the one form the
+  // platform can resolve without ever putting "no app can open this" on screen:
+  // an Android intent carrying its own fallback, or the app's scheme on iOS with
+  // the browser as a safety net.
   const ANDROID_UA =
     "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36";
+  const IOS_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
   const DESKTOP_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
-  const appCases = [
-    { name: "YouTube", card: "Website", value: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", app: /^vnd\.youtube:dQw4w9WgXcQ$/, web: "youtube.com/watch?v=dQw4w9WgXcQ" },
-    { name: "Instagram", card: "Website", value: "https://www.instagram.com/abuomar/", app: /^instagram:\/\/user\?username=abuomar$/, web: "instagram.com/abuomar" },
-    { name: "Telegram", card: "Website", value: "https://t.me/qrstudiopro", app: /^tg:\/\/resolve\?domain=qrstudiopro$/, web: "t.me/qrstudiopro" },
-    { name: "TikTok", card: "Website", value: "https://www.tiktok.com/@abuomar", app: /^tiktok:\/\/user\/@abuomar$/, web: "tiktok.com/@abuomar" },
-    { name: "X", card: "Website", value: "https://x.com/abuomar", app: /^twitter:\/\/user\?screen_name=abuomar$/, web: "x.com/abuomar" },
+  const enc = (v) => encodeURIComponent(v).replace(/;/g, "%3B");
+
+  /** Android: one intent naming the app, the scheme and the browser fallback. */
+  const androidCases = [
+    { name: "YouTube", value: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", body: "www.youtube.com/watch?v=dQw4w9WgXcQ#Intent;scheme=https;", pkg: "com.google.android.youtube" },
+    { name: "Instagram", value: "https://www.instagram.com/abuomar/", body: "user?username=abuomar#Intent;scheme=instagram;", pkg: "com.instagram.android" },
+    { name: "Telegram", value: "https://t.me/qrstudiopro", body: "resolve?domain=qrstudiopro#Intent;scheme=tg;", pkg: "org.telegram.messenger" },
+    { name: "TikTok", value: "https://www.tiktok.com/@abuomar", body: "user/@abuomar#Intent;scheme=tiktok;", pkg: "com.zhiliaoapp.musically" },
+    { name: "X", value: "https://x.com/abuomar", body: "user?screen_name=abuomar#Intent;scheme=twitter;", pkg: "com.twitter.android" },
+    { name: "Snapchat", value: "https://www.snapchat.com/add/abuomar", body: "add/abuomar#Intent;scheme=snapchat;", pkg: "com.snapchat.android" },
   ];
 
-  for (const c of appCases) {
+  for (const c of androidCases) {
     await page.setUserAgent(ANDROID_UA);
     const file = join(tmpdir(), `qr-app-${c.name}.png`);
-    const made = await makeQr(c.card, c.value, file);
+    const made = await makeQr("Website", c.value, file);
     check(`create: built a QR for ${c.name}`, made);
     if (!made) continue;
     const { events } = await scanAndOpen(file);
     const hrefs = events.map((e) => e.href || "");
-    check(`${c.name}: the app's own link is tried first`, hrefs.some((h) => c.app.test(h)), JSON.stringify(hrefs));
-    check(`${c.name}: falls back to the browser when no app answers`, hrefs.some((h) => h.includes(c.web)), JSON.stringify(hrefs));
+    const expected = `intent://${c.body}package=${c.pkg};S.browser_fallback_url=${enc(c.value)};end`;
+    check(`${c.name}: one intent names the app and its fallback`, hrefs[0] === expected, JSON.stringify(hrefs));
+    check(`${c.name}: nothing else is fired behind the OS's back`, hrefs.length === 1, JSON.stringify(hrefs));
+    check(`${c.name}: the intent can fall back to the browser`, hrefs[0]?.includes(`S.browser_fallback_url=${enc(c.value)}`) === true, hrefs[0]);
+  }
+
+  // iOS has no intents: the scheme first, the browser only if nothing answers.
+  await page.setUserAgent(IOS_UA);
+  const iosFile = join(tmpdir(), "qr-app-ios.png");
+  if (await makeQr("Website", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", iosFile)) {
+    const { events } = await scanAndOpen(iosFile);
+    const hrefs = events.map((e) => e.href || "");
+    check("iOS: the app's scheme is tried first", hrefs[0] === "youtube://watch?v=dQw4w9WgXcQ", JSON.stringify(hrefs));
+    check("iOS: the browser takes over when no app answers", hrefs.some((h) => h === "https://www.youtube.com/watch?v=dQw4w9WgXcQ"), JSON.stringify(hrefs));
+    check("iOS: the browser is only tried once", hrefs.filter((h) => h.startsWith("https://")).length === 1, JSON.stringify(hrefs));
   }
 
   // On a desktop there is no YouTube app to hand off to — go straight to the web.
@@ -340,9 +360,9 @@ try {
   if (await makeQr("Website", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", ytDesktop)) {
     const { events } = await scanAndOpen(ytDesktop);
     const hrefs = events.map((e) => e.href || "");
-    check("desktop: no app scheme, the browser opens the link", !hrefs.some((h) => /^vnd\.youtube:/.test(h)) && hrefs.some((h) => h.includes("youtube.com")), JSON.stringify(hrefs));
+    check("desktop: no app scheme, the browser opens the link", !hrefs.some((h) => /^(intent|vnd\.youtube):/.test(h)) && hrefs.some((h) => h.includes("youtube.com")), JSON.stringify(hrefs));
   }
-  await page.setUserAgent(ANDROID_UA);
+  await page.setUserAgent(DESKTOP_UA);
 
   // ---------------------------------------------------------------- safety
   await page.keyboard.press("Escape");

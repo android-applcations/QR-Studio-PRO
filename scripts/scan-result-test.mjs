@@ -300,8 +300,39 @@ try {
   if (madeUrl) {
     check("scan: the website code was detected", await scan(urlFile));
     const r = await rows();
-    check("URL: shown as a labelled row", r.length >= 1 && r.some((x) => x.value.includes("example.com")), JSON.stringify(r));
+    // A link says what it is before it shows the raw URL.
+    check("URL: names the site it points at", r.some((x) => /Platform|المنصة/i.test(x.label) && x.value === "example.com"), JSON.stringify(r));
+    check("URL: still shows the link itself", r.some((x) => /Link|الرابط/i.test(x.label) && x.value === "https://example.com/hello"), JSON.stringify(r));
     check("URL: no 'Connect to network' button", !(await hasButton("Connect to network", "الاتصال بالشبكة")));
+  }
+
+  // ------------------------------------------------------------------ social link
+  // Scanned profiles used to be one row of raw URL. They now name the platform
+  // and the account, in that order, like every other panel.
+  const igFile = join(tmpdir(), "qr-scan-instagram.png");
+  const madeIg = await makeQr("Website", [["#f-url-url", "https://www.instagram.com/abuomar/"]], igFile);
+  check("create: built an Instagram link QR", madeIg);
+  if (madeIg) {
+    check("scan: the Instagram code was detected", await scan(igFile));
+    const r = await rows();
+    check("Instagram: the platform comes first", (r[0]?.value ?? "") === "Instagram", JSON.stringify(r));
+    check("Instagram: then the account", r.some((x) => /Username|اسم المستخدم/i.test(x.label) && x.value === "@abuomar"), JSON.stringify(r));
+    check("Instagram: then the link", r.some((x) => /Link|الرابط/i.test(x.label) && x.value.includes("instagram.com/abuomar")), JSON.stringify(r));
+  }
+
+  // ------------------------------------------------------------------ Sham Cash
+  // The code is the whole payload, so the panel has to say what kind of code it
+  // is — otherwise a wallet address is just 32 characters of noise.
+  const shamFile = join(tmpdir(), "qr-scan-shamcash.png");
+  const madeSham = await makeQr("Plain text", [['textarea[id^="f-"]', "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"]], shamFile);
+  check("create: built a Sham Cash code QR", madeSham);
+  if (madeSham) {
+    check("scan: the Sham Cash code was detected", await scan(shamFile));
+    const r = await rows();
+    const body = await page.evaluate(() => document.body.innerText || "");
+    check("Sham Cash: recognised as Sham Cash, not plain text", /Sham Cash|شام كاش/.test(body), body.slice(0, 160).replace(/\n+/g, " | "));
+    check("Sham Cash: the platform comes first", /شام كاش|Sham Cash/.test(r[0]?.value ?? ""), JSON.stringify(r));
+    check("Sham Cash: the wallet code is shown in full", r.some((x) => /Wallet code|رمز المحفظة/i.test(x.label) && x.value === "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"), JSON.stringify(r));
   }
 
   // ------------------------------------------------------------------ vCard

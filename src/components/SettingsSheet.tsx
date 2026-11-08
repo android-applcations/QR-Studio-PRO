@@ -9,6 +9,7 @@ import { downloadBlob, timestampName } from "../engine/exportEngine";
 import { cn } from "../utils/cn";
 import { openInAppOrBrowser } from "../core/openExternal";
 import { WhatsAppMark } from "./BrandIcon";
+import { UpdateBadge } from "./ui";
 import ConnectionStatus from "./ConnectionStatus";
 import InstallButton from "./InstallButton";
 import { Button, Modal, Notice, Segmented, Toggle } from "./ui";
@@ -175,9 +176,12 @@ export function SettingsSheet() {
                 <ConnectionStatus autoHideReadyMs={0} />
                 <InstallButton />
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {needRefresh ? (
-                  <Button variant="primary" disabled={updating} onClick={doUpdate} icon={<RefreshCw size={17} />}>{t(["Update now", "تحديث الآن"])}</Button>
+                  <>
+                    <Button variant="primary" disabled={updating} onClick={doUpdate} icon={<RefreshCw size={17} />}>{t(["Update now", "تحديث الآن"])}</Button>
+                    <UpdateBadge />
+                  </>
                 ) : (
                   <Button disabled={updating} onClick={doCheckUpdates} icon={<RefreshCw size={17} />}>{t(["Check for updates", "التحقق من التحديثات"])}</Button>
                 )}

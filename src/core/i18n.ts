@@ -23,6 +23,8 @@ export const T = {
   close: ["Close", "إغلاق"],
   back: ["Back", "رجوع"],
   search: ["Search", "بحث"],
+  /** the word printed inside the red update pill */
+  updateBadge: ["Update", "تحديث"],
   undo: ["Undo", "تراجع"],
   redo: ["Redo", "إعادة"],
   reset: ["Reset", "إعادة ضبط"],

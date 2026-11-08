@@ -8,13 +8,14 @@ import { AppProvider, useApp } from "./state/AppContext";
 import { ProjectProvider } from "./state/ProjectContext";
 import { cn } from "./utils/cn";
 import { playSound } from "./core/sound";
+import { usePwa } from "./pwa/PwaProvider";
 import CreateScreen from "./components/CreateScreen";
 import DesignEditor from "./components/DesignEditor";
 import ScannerScreen from "./components/ScannerScreen";
 import LibraryScreen from "./components/LibraryScreen";
 import HistoryScreen from "./components/HistoryScreen";
 import TemplatesScreen from "./components/TemplatesScreen";
-import { ConfirmHost, IconBtn, Spinner, ToastHost } from "./components/ui";
+import { ConfirmHost, IconBtn, Spinner, ToastHost, UpdateBadge } from "./components/ui";
 import { SettingsSheet } from "./components/SettingsSheet";
 import ConnectionStatus from "./components/ConnectionStatus";
 import InstallButton from "./components/InstallButton";
@@ -96,6 +97,8 @@ function StorageChip() {
 
 function Shell() {
   const { t, lang, setLang, section, go, setSettingsOpen } = useApp();
+  // True only once a new version has finished downloading and is waiting.
+  const { needRefresh } = usePwa();
   const [boundaryKey, setBoundaryKey] = useState(0);
 
   // Only the section change makes a sound: navigating is a distinct action.
@@ -127,7 +130,12 @@ function Shell() {
         <button type="button" onClick={() => { playSound("nav"); setLang(lang === "ar" ? "en" : "ar"); }} className="press min-h-10 min-w-10 rounded-xl border border-line bg-surface2/60 px-3 text-sm font-bold" aria-label={t(["Switch language", "تبديل اللغة"])} title={t(["Switch language", "تبديل اللغة"])}>
           {lang === "ar" ? "EN" : "ع"}
         </button>
-        <IconBtn label={t(T.settings)} onClick={() => setSettingsOpen(true)}><Settings size={22} /></IconBtn>
+        {/* The red pill sits on the settings icon so the update is impossible to
+            miss, and it is dropped the moment the update is installed. */}
+        <div className="relative shrink-0">
+          <IconBtn label={t(T.settings)} onClick={() => setSettingsOpen(true)}><Settings size={22} /></IconBtn>
+          {needRefresh && <UpdateBadge className="pointer-events-none absolute -top-1.5 end-0" />}
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1">

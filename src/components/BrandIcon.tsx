@@ -16,6 +16,10 @@ interface Brand {
   /** glyph color */
   fg: string;
   ring?: boolean;
+  /** the real logo file instead of a glyph (brands with no icon font) */
+  src?: string;
+  /** how much of the tile the logo leaves as margin (0 = fills it) */
+  pad?: number;
 }
 
 // LinkedIn was removed from simple-icons; official mark path embedded here.
@@ -42,6 +46,9 @@ const BRANDS: Record<string, Brand> = {
   bitcoin: { path: siBitcoin.path, bg: "#f7931a", fg: "#fff" },
   googlemaps: { path: siGooglemaps.path, bg: "#ffffff", fg: "#ea4335" },
   appstore: { path: siAppstore.path, bg: "#0d96f6", fg: "#fff" },
+  // Official mark: a blue-to-teal swoosh. Shipped as a file (4.7 KB, transparent)
+  // because no icon font carries it, and it is precached with the app.
+  shamcash: { path: "", bg: "#ffffff", fg: "#fff", src: "/brands/shamcash.png", pad: 0.06, ring: true },
 };
 
 const LUCIDE: Record<string, { Icon: LucideIcon; bg: string }> = {
@@ -98,7 +105,16 @@ export const TypeIcon = memo(function TypeIcon({ icon, size = 44, className = ""
         role="img"
         aria-hidden="true"
       >
-        {icon === "tiktok" ? (
+        {brand.src ? (
+          <img
+            src={brand.src}
+            alt=""
+            width={size}
+            height={size}
+            style={{ padding: Math.round(size * (brand.pad ?? 0.1)) }}
+            className="h-full w-full object-contain"
+          />
+        ) : icon === "tiktok" ? (
           <TikTokGlyph path={brand.path} size={glyph} />
         ) : (
           <svg viewBox="0 0 24 24" width={glyph} height={glyph} fill={brand.fg} aria-hidden="true">
