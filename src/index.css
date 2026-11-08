@@ -1,0 +1,241 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-surface2: var(--c-surface2);
+  --color-line: var(--c-line);
+  --color-fg: var(--c-fg);
+  --color-muted: var(--c-muted);
+  --color-brand: var(--c-brand);
+  --color-brand2: var(--c-brand2);
+  --color-ok: var(--c-ok);
+  --color-warn: var(--c-warn);
+  --color-bad: var(--c-bad);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Arabic", "Noto Kufi Arabic", Tahoma, Arial, sans-serif;
+}
+
+:root,
+[data-theme="dark"] {
+  --c-bg: #090a10;
+  --c-surface: #12141d;
+  --c-surface2: #1a1d29;
+  --c-line: rgba(255, 255, 255, 0.08);
+  --c-fg: #eef0f7;
+  --c-muted: #8f94a8;
+  --c-brand: #7c6cff;
+  --c-brand2: #22d3ee;
+  --c-ok: #34d399;
+  --c-warn: #fbbf24;
+  --c-bad: #f87171;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --c-bg: #f2f3f8;
+  --c-surface: #ffffff;
+  --c-surface2: #eceef6;
+  --c-line: rgba(15, 18, 40, 0.1);
+  --c-fg: #14172b;
+  --c-muted: #5d6280;
+  --c-brand: #5b4bff;
+  --c-brand2: #0891b2;
+  --c-ok: #059669;
+  --c-warn: #b45309;
+  --c-bad: #dc2626;
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden; /* single fixed screen: no page scrolling */
+  overscroll-behavior: none;
+}
+
+body {
+  background: var(--c-bg);
+  color: var(--c-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  text-size-adjust: 100%;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 150, 0.35) transparent;
+}
+
+/* Internal scroll container: GPU layer, no chained scrolling, smooth touch */
+.scroll-area {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  transform: translateZ(0);
+  scroll-behavior: auto;
+}
+
+/* Off-screen cards are skipped by the renderer while scrolling */
+.cv-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 92px;
+}
+
+.card {
+  background: linear-gradient(160deg, color-mix(in srgb, var(--c-surface2) 70%, transparent), var(--c-surface));
+  border: 1px solid var(--c-line);
+  border-radius: 1rem;
+}
+
+.press {
+  transition: transform 0.12s ease, background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+.press:active {
+  transform: scale(0.96);
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes sheet-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+@keyframes scan-line {
+  0% {
+    top: 6%;
+  }
+  100% {
+    top: 94%;
+  }
+}
+
+.anim-fade-up {
+  animation: fade-up 0.28s ease both;
+}
+.anim-fade-in {
+  animation: fade-in 0.2s ease both;
+}
+.anim-pop {
+  animation: pop-in 0.22s ease both;
+}
+.anim-sheet {
+  animation: sheet-up 0.26s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--c-surface2) 25%, color-mix(in srgb, var(--c-surface2) 60%, var(--c-fg) 8%) 50%, var(--c-surface2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* View transitions (hero) */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.22s;
+}
+
+input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+input[type="color"]::-webkit-color-swatch {
+  border: 1px solid var(--c-line);
+  border-radius: 0.6rem;
+}
+input[type="range"] {
+  accent-color: var(--c-brand);
+}
+
+:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
+@media print {
+  html,
+  body {
+    background: #fff !important;
+  }
+  #root {
+    display: none !important;
+  }
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
