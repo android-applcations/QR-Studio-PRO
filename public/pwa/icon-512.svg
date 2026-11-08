@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="QR Studio Pro icon">
+  <defs>
+    <linearGradient id="g2" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#7c6cff" />
+      <stop offset="100%" stop-color="#22d3ee" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#g2)"/>
+  <rect x="78" y="78" width="356" height="356" rx="70" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.18)"/>
+  <g fill="#ffffff">
+    <rect x="126" y="126" width="42" height="42" rx="10"/>
+    <rect x="126" y="210" width="42" height="42" rx="10"/>
+    <rect x="126" y="294" width="42" height="42" rx="10"/>
+    <rect x="210" y="126" width="42" height="42" rx="10"/>
+    <rect x="294" y="126" width="42" height="42" rx="10"/>
+    <rect x="210" y="210" width="42" height="42" rx="10"/>
+    <rect x="294" y="210" width="42" height="42" rx="10"/>
+    <rect x="210" y="294" width="42" height="42" rx="10"/>
+    <rect x="294" y="294" width="42" height="42" rx="10"/>
+    <rect x="378" y="126" width="42" height="42" rx="10"/>
+    <rect x="378" y="210" width="42" height="42" rx="10"/>
+    <rect x="378" y="294" width="42" height="42" rx="10"/>
+  </g>
+  <circle cx="338" cy="338" r="28" fill="#ffffff" opacity="0.9"/>
+</svg>

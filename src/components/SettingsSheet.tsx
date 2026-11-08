@@ -1,221 +1,261 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Database, Download, FileUp, HardDrive, History, Info, Languages, Moon, Palette, ScrollText, ShieldCheck, Sun, Trash2, Monitor } from "lucide-react";
-import { PRIVACY, T, TERMS, formatBytes, formatDate, pick, type LegalDoc } from "../core/i18n";
-import type { Lang, ThemeMode } from "../core/types";
-import { DB_VERSION, clearHistory, exportBackup, importBackup, parseBackup, requestPersistence, storageEstimate, wipeAll, type ParsedBackup } from "../db/db";
-import { useApp } from "../state/AppContext";
-import { downloadBlob, timestampName } from "../engine/exportEngine";
-import { cn } from "../utils/cn";
-import { WhatsAppMark } from "./BrandIcon";
-import { Button, Modal, Notice, Segmented, Toggle } from "./ui";
+import { Component, lazy, Suspense, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
+import { CloudOff, Clock, HardDrive, LayoutTemplate, Library, Palette, QrCode, RefreshCw, ScanLine, Settings, Sparkles, Wifi, WifiOff } from "lucide-react";
+import { useRegisterSW } from "virtual:pwa-register/react";
+import type { SectionId } from "./core/types";
+import { T } from "./core/i18n";
+import { loadSettings, storageEstimate } from "./db/db";
+import { formatBytes } from "./core/i18n";
+import { AppProvider, useApp } from "./state/AppContext";
+import { ProjectProvider } from "./state/ProjectContext";
+import { cn } from "./utils/cn";
+import CreateScreen from "./components/CreateScreen";
+import { ConfirmHost, IconBtn, Spinner, ToastHost } from "./components/ui";
+import { SettingsSheet } from "./components/SettingsSheet";
 
-const WA_NUMBER = "447454190643";
-const APP_VERSION = "2.0.0";
+const DesignEditor = lazy(() => import("./components/DesignEditor"));
+const ScannerScreen = lazy(() => import("./components/ScannerScreen"));
+const LibraryScreen = lazy(() => import("./components/LibraryScreen"));
+const HistoryScreen = lazy(() => import("./components/HistoryScreen"));
+const TemplatesScreen = lazy(() => import("./components/TemplatesScreen"));
 
-function Group({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
-  return (
-    <section className="card p-3.5">
-      <h3 className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-muted"><span className="text-brand">{icon}</span>{title}</h3>
-      {children}
-    </section>
-  );
+const NAV: { id: SectionId; label: readonly [string, string]; icon: typeof QrCode }[] = [
+  { id: "create", label: T.create, icon: Sparkles },
+  { id: "design", label: T.design, icon: Palette },
+  { id: "scan", label: T.scan, icon: ScanLine },
+  { id: "library", label: T.library, icon: Library },
+  { id: "history", label: T.history, icon: Clock },
+  { id: "templates", label: T.templates, icon: LayoutTemplate },
+];
+
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
+class Boundary extends Component<{ children: ReactNode; onReset: () => void }, { err: boolean }> {
+  state = { err: false };
+  static getDerivedStateFromError() {
+    return { err: true };
+  }
+  componentDidCatch(e: Error, info: ErrorInfo) {
+    console.error(e, info);
+  }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+        <p className="text-sm text-muted">Something went wrong · حدث خطأ غير متوقع</p>
+        <button type="button" className="press min-h-11 rounded-xl bg-brand px-5 text-white" onClick={() => { this.setState({ err: false }); this.props.onReset(); }}>
+          OK
+        </button>
+      </div>
+    );
+  }
 }
 
-function Legal({ doc, lang }: { doc: LegalDoc; lang: Lang }) {
-  const [open, setOpen] = useState(false);
-  const [l, setL] = useState<Lang>(lang);
+function PwaStatus() {
+  const { t, toast } = useApp();
+  const { offlineReady, needRefresh, updateServiceWorker } = useRegisterSW();
+  const [online, setOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [displayMode, setDisplayMode] = useState<"standalone" | "browser">(
+    typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches ? "standalone" : "browser",
+  );
+
+  useEffect(() => {
+    const updateOnlineState = () => setOnline(navigator.onLine);
+    const onBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+
+    const onAppInstalled = () => {
+      setInstallPrompt(null);
+      setDisplayMode("standalone");
+    };
+
+    const media = window.matchMedia("(display-mode: standalone)");
+    const syncDisplayMode = () => setDisplayMode(media.matches ? "standalone" : "browser");
+
+    updateOnlineState();
+    syncDisplayMode();
+    window.addEventListener("online", updateOnlineState);
+    window.addEventListener("offline", updateOnlineState);
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", onAppInstalled);
+    media.addEventListener("change", syncDisplayMode);
+
+    return () => {
+      window.removeEventListener("online", updateOnlineState);
+      window.removeEventListener("offline", updateOnlineState);
+      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", onAppInstalled);
+      media.removeEventListener("change", syncDisplayMode);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (offlineReady) {
+      toast(t(["App ready for offline use", "التطبيق جاهز للاستخدام دون الإنترنت"]), "ok");
+    }
+  }, [offlineReady, t, toast]);
+
+  const statusText = needRefresh
+    ? t(["Update available", "تحديث متاح"])
+    : offlineReady
+      ? t(["Installing", "جارٍ التثبيت"])
+      : online
+        ? t(["Online", "متصل"])
+        : t(["Offline", "غير متصل"]);
+
+  const statusColor = needRefresh ? "bg-warn" : offlineReady ? "bg-brand" : online ? "bg-ok" : "bg-bad";
+
   return (
-    <div className="rounded-xl border border-line bg-surface2/40">
-      <button type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)} className="press flex min-h-12 w-full items-center justify-between px-3 text-start text-sm font-medium">
-        {pick(lang, doc.title)}
-        <ChevronDown size={18} className={cn("transition-transform", open && "rotate-180")} />
-      </button>
-      {open && (
-        <div className="anim-fade-in border-t border-line px-3 pb-3 pt-2" dir={l === "ar" ? "rtl" : "ltr"}>
-          <div className="mb-2 flex justify-end" dir="ltr">
-            <div className="w-40"><Segmented value={l} onChange={setL} label="legal language" options={[{ value: "ar", label: "العربية" }, { value: "en", label: "English" }]} /></div>
-          </div>
-          <ol className="list-decimal space-y-1.5 ps-5 text-[13px] leading-6 text-muted">
-            {doc.items.map((it, i) => <li key={i}>{pick(l, it)}</li>)}
-          </ol>
-        </div>
+    <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 rounded-full border border-line bg-surface2/70 px-2.5 py-1 text-[11px] font-medium text-muted">
+        <span className={cn("h-2 w-2 rounded-full", statusColor)} />
+        <span>{statusText}</span>
+      </div>
+      {installPrompt && displayMode !== "standalone" && (
+        <button
+          type="button"
+          onClick={() => {
+            void installPrompt.prompt();
+            setInstallPrompt(null);
+          }}
+          className="press rounded-full bg-brand px-2.5 py-1 text-[11px] font-semibold text-white"
+        >
+          {t(["Install", "تثبيت"]) }
+        </button>
       )}
+      {needRefresh && (
+        <button
+          type="button"
+          onClick={() => updateServiceWorker(true)}
+          className="press flex items-center gap-1 rounded-full border border-brand/30 bg-brand/10 px-2.5 py-1 text-[11px] font-semibold text-brand"
+        >
+          <RefreshCw size={12} />
+          {t(["Update now", "تحديث الآن"])}
+        </button>
+      )}
+      {!online && <CloudOff size={14} className="text-bad" />}
     </div>
   );
 }
 
-export function SettingsSheet() {
-  const { t, lang, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, settingsOpen, setSettingsOpen, toast, fail, confirm, bumpData, dataVersion } = useApp();
-  const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
-  const [parsed, setParsed] = useState<ParsedBackup | null>(null);
-  const [busy, setBusy] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-
+function StorageChip() {
+  const { t, dataVersion, setSettingsOpen } = useApp();
+  const [s, setS] = useState<{ usage: number; quota: number } | null | undefined>(undefined);
   useEffect(() => {
-    if (settingsOpen) storageEstimate().then(setStorage);
-  }, [settingsOpen, dataVersion]);
+    const id = setTimeout(() => storageEstimate().then(setS), 300);
+    return () => clearTimeout(id);
+  }, [dataVersion]);
+  const pct = s && s.quota ? (s.usage / s.quota) * 100 : 0;
+  return (
+    <button
+      type="button"
+      onClick={() => setSettingsOpen(true)}
+      title={t(["Local storage status", "حالة التخزين المحلي"])}
+      aria-label={t(["Local storage status", "حالة التخزين المحلي"])}
+      className="press hidden min-h-9 items-center gap-1.5 rounded-full border border-line bg-surface2/60 px-3 text-[12px] text-muted sm:flex"
+    >
+      <HardDrive size={14} />
+      <span className={cn("h-2 w-2 rounded-full", s === null ? "bg-warn" : pct > 85 ? "bg-bad" : "bg-ok")} />
+      <span dir="ltr" className="tabular-nums">{s ? formatBytes(s.usage) : s === null ? "IndexedDB" : "…"}</span>
+    </button>
+  );
+}
 
-  const doExport = async () => {
-    setBusy(true);
-    try {
-      downloadBlob(await exportBackup(), `${timestampName("qr-studio-backup")}.json`);
-      toast(t(["Backup exported", "تم تصدير النسخة الاحتياطية"]));
-    } catch (e) { fail(e); } finally { setBusy(false); }
-  };
+function Shell() {
+  const { t, lang, setLang, section, go, setSettingsOpen } = useApp();
+  const [boundaryKey, setBoundaryKey] = useState(0);
 
-  const onFile = async (f: File | undefined) => {
-    if (!f) return;
-    try {
-      if (f.size > 100 * 1024 * 1024) throw new Error("big");
-      setParsed(parseBackup(await f.text()));
-    } catch (e) { fail(e); }
-  };
-
-  const doImport = async (mode: "merge" | "replace") => {
-    if (!parsed) return;
-    if (mode === "replace") {
-      const ok = await confirm({ title: ["Replace all data?", "استبدال كل البيانات؟"], message: ["Your current codes, templates and history will be overwritten by the backup. This cannot be undone.", "سيتم الكتابة فوق رموزك وقوالبك وسجلك الحالي ببيانات النسخة. لا يمكن التراجع."], confirmLabel: ["Replace", "استبدال"], danger: true });
-      if (!ok) return;
+  const screen = (() => {
+    switch (section) {
+      case "design": return <DesignEditor />;
+      case "scan": return <ScannerScreen />;
+      case "library": return <LibraryScreen />;
+      case "history": return <HistoryScreen />;
+      case "templates": return <TemplatesScreen />;
+      default: return <CreateScreen />;
     }
-    setBusy(true);
-    try {
-      await importBackup(parsed, mode);
-      bumpData();
-      setParsed(null);
-      toast(t(["Backup restored. Restart to apply language/theme.", "تمت الاستعادة. أعد فتح التطبيق لتطبيق اللغة/المظهر."]));
-    } catch (e) { fail(e); } finally { setBusy(false); }
-  };
-
-  const clearHist = async () => {
-    const ok = await confirm({ title: ["Clear history?", "مسح السجل؟"], message: ["All logged activity will be deleted.", "سيتم حذف كل النشاط المسجّل."], confirmLabel: ["Clear", "مسح"], danger: true });
-    if (!ok) return;
-    try { await clearHistory(); bumpData(); toast(t(T.deleted)); } catch (e) { fail(e); }
-  };
-
-  const wipe = async () => {
-    const ok = await confirm({ title: ["Delete ALL app data?", "حذف كل بيانات التطبيق؟"], message: ["Saved codes, templates, categories, history and settings will be permanently erased from this device. Export a backup first if you need it.", "سيتم مسح الرموز المحفوظة والقوالب والتصنيفات والسجل والإعدادات نهائياً من هذا الجهاز. صدّر نسخة احتياطية أولاً إن احتجت."], confirmLabel: ["Delete everything", "حذف كل شيء"], danger: true });
-    if (!ok) return;
-    try { await wipeAll(); bumpData(); toast(t(["All data deleted", "تم حذف كل البيانات"])); } catch (e) { fail(e); }
-  };
-
-  const persist = async () => {
-    const ok = await requestPersistence();
-    toast(ok ? t(["Storage is now protected from automatic cleanup", "أصبح التخزين محمياً من التنظيف التلقائي"]) : t(["The browser did not grant persistent storage", "لم يمنح المتصفح تخزيناً دائماً"]), ok ? "ok" : "info");
-  };
-
-  const pct = storage && storage.quota ? Math.min(100, (storage.usage / storage.quota) * 100) : 0;
-  const waText = encodeURIComponent(t(["Hello, I'm contacting you about QR Studio Pro.", "مرحباً، أتواصل معك بخصوص تطبيق QR Studio Pro."]));
-  const themes: { value: ThemeMode; label: ReactNode }[] = [
-    { value: "dark", label: <><Moon size={15} />{t(["Dark", "داكن"])}</> },
-    { value: "light", label: <><Sun size={15} />{t(["Light", "فاتح"])}</> },
-    { value: "system", label: <><Monitor size={15} />{t(["System", "النظام"])}</> },
-  ];
+  })();
 
   return (
-    <>
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title={t(T.settings)} wide>
-        <div className="space-y-3 pb-2">
-          <Group icon={<Languages size={17} />} title={t(T.language)}>
-            <Segmented value={lang} onChange={setLang} label={t(T.language)} options={[{ value: "ar", label: "العربية" }, { value: "en", label: "English" }]} />
-          </Group>
+    <div className="fixed inset-0 flex flex-col bg-bg text-fg" style={{ paddingTop: "env(safe-area-inset-top)", paddingLeft: "env(safe-area-inset-left)", paddingRight: "env(safe-area-inset-right)" }}>
+      <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-line bg-surface/90 px-3 md:px-5">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand to-brand2 text-white shadow-[0_6px_16px_-6px_var(--c-brand)]"><QrCode size={20} /></div>
+        <h1 className="min-w-0 flex-1 truncate text-[17px] font-extrabold tracking-tight">QR Studio <span className="text-brand">Pro</span></h1>
+        <div className="hidden sm:flex"><PwaStatus /></div>
+        <StorageChip />
+        <button type="button" onClick={() => setLang(lang === "ar" ? "en" : "ar")} className="press min-h-10 min-w-10 rounded-xl border border-line bg-surface2/60 px-3 text-sm font-bold" aria-label={t(["Switch language", "تبديل اللغة"]) }>
+          {lang === "ar" ? "EN" : "ع"}
+        </button>
+        <IconBtn label={t(T.settings)} onClick={() => setSettingsOpen(true)}><Settings size={22} /></IconBtn>
+      </header>
 
-          <Group icon={<Palette size={17} />} title={t(["Appearance", "المظهر"])}>
-            <Segmented value={theme} onChange={setTheme} label={t(["Appearance", "المظهر"])} options={themes} />
-          </Group>
+      <div className="flex min-h-0 flex-1">
+        <nav aria-label={t(["Main navigation", "التنقل الرئيسي"])} className="hidden w-[84px] shrink-0 flex-col items-stretch gap-1 border-e border-line bg-surface/60 p-2 md:flex lg:[...]" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+          {NAV.map((n) => (
+            <button key={n.id} type="button" onClick={() => go(n.id)} aria-current={section === n.id ? "page" : undefined} className={cn("press flex min-h-12 items-center justify-center gap-3 rounded-xl border text-sm font-medium", section === n.id ? "border-brand/40 bg-brand/10 text-brand" : "border-transparent bg-transparent text-muted hover:border-line hover:bg-surface2/60")}>
+              <n.icon size={21} />
+              <span className="hidden lg:inline">{t(n.label)}</span>
+            </button>
+          ))}
+        </nav>
 
-          <Group icon={<Database size={17} />} title={t(["Backup & restore", "النسخ الاحتياطي والاستعادة"])}>
-            <p className="mb-2 text-xs leading-5 text-muted">{t(["Export codes, designs, templates and settings to a file, or restore them. Files stay on your device.", "صدّر الرموز والتصاميم والقوالب والإعدادات إلى ملف، أو استعدها. تبقى الملفات على جهازك."])}</p>
-            <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(e) => { void onFile(e.target.files?.[0]); e.target.value = ""; }} />
-            <div className="flex flex-wrap gap-2">
-              <Button variant="primary" disabled={busy} onClick={doExport} icon={<Download size={17} />}>{t(["Export backup", "تصدير نسخة"])}</Button>
-              <Button disabled={busy} onClick={() => fileRef.current?.click()} icon={<FileUp size={17} />}>{t(["Import backup", "استيراد نسخة"])}</Button>
+        <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+          <Boundary key={boundaryKey} onReset={() => { setBoundaryKey((k) => k + 1); go("create"); }}>
+            <div key={section} className="anim-fade-in h-full">
+              <Suspense fallback={<div className="flex h-full items-center justify-center gap-2 text-muted"><Spinner />{t(T.loading)}</div>}>
+                {screen}
+              </Suspense>
             </div>
-          </Group>
+          </Boundary>
+        </main>
+      </div>
 
-          <Group icon={<History size={17} />} title={t(["History & data", "السجل والبيانات"])}>
-            <Toggle checked={saveHistory} onChange={setSaveHistory} label={t(["Keep activity history", "حفظ سجل العمليات"])} desc={t(["Wi-Fi passwords and payment details are never logged.", "لا تُسجَّل كلمات مرور Wi-Fi ولا بيانات الدفع."])} />
-            <Toggle checked={autoSave} onChange={setAutoSave} label={t(["Auto-save to My codes", "حفظ تلقائي في رموزي"])} desc={t(["Keeps the current valid code updated in your library.", "يحدّث الرمز الصالح الحالي في مكتبتك تلقائياً."])} />
-            <div className="mt-2 rounded-xl border border-line bg-surface2/40 p-3">
-              <div className="mb-1.5 flex items-center justify-between text-xs">
-                <span className="flex items-center gap-1.5 text-muted"><HardDrive size={14} />{t(["Local storage", "التخزين المحلي"])}</span>
-                <span dir="ltr" className="tabular-nums">{storage ? `${formatBytes(storage.usage)}${storage.quota ? " / " + formatBytes(storage.quota) : ""}` : t(["Unavailable", "غير متاح"])}</span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-surface2"><div className="h-full bg-brand" style={{ width: `${Math.max(2, pct)}%` }} /></div>
-              {"storage" in navigator && typeof navigator.storage?.persist === "function" && <button type="button" onClick={persist} className="press mt-2 min-h-9 text-xs text-brand">{t(["Protect storage from cleanup", "حماية التخزين من التنظيف"])}</button>}
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button onClick={clearHist} icon={<History size={16} />}>{t(["Clear history", "مسح السجل"])}</Button>
-              <Button variant="danger" onClick={wipe} icon={<Trash2 size={16} />}>{t(["Delete all data", "حذف كل البيانات"])}</Button>
-            </div>
-          </Group>
+      <nav aria-label={t(["Main navigation", "التنقل الرئيسي"])} className="flex shrink-0 border-t border-line bg-surface md:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        {NAV.map((n) => (
+          <button key={n.id} type="button" onClick={() => go(n.id)} aria-current={section === n.id ? "page" : undefined} className={cn("press relative flex min-h-[58px] flex-1 flex-col items-center justify-center gap-1 text-[11px] font-medium", section === n.id ? "text-brand" : "text-muted")}>
+            {section === n.id && <span className="anim-fade-in absolute top-0 h-0.5 w-8 rounded-full bg-brand" />}
+            <n.icon size={22} strokeWidth={section === n.id ? 2.4 : 2} />
+            <span className="max-w-full truncate px-0.5">{t(n.label)}</span>
+          </button>
+        ))}
+      </nav>
 
-          <Group icon={<ScrollText size={17} />} title={`${pick(lang, TERMS.title)} · ${pick(lang, PRIVACY.title)}`}>
-            <div className="space-y-2">
-              <Legal key={lang + "t"} doc={TERMS} lang={lang} />
-              <Legal key={lang + "p"} doc={PRIVACY} lang={lang} />
-            </div>
-          </Group>
+      <SettingsSheet />
+      <ConfirmHost />
+      <ToastHost />
+    </div>
+  );
+}
 
-          <Group icon={<Info size={17} />} title={t(["App info", "معلومات التطبيق"])}>
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand to-brand2 text-white"><ShieldCheck size={24} /></div>
-                <div className="min-w-0">
-                  <p className="font-bold">QR Studio Pro</p>
-                  <p className="text-xs text-muted" dir="ltr">v{APP_VERSION} · DB v{DB_VERSION}</p>
-                </div>
-              </div>
-              <p className="rounded-xl border border-line bg-surface2/40 px-3 py-2.5 text-sm">
-                {t(["Developed by Abu Omar", "تم التطوير بواسطة أبو عمر"])}
-                <span className="block text-xs text-muted">QR Studio Pro</span>
-              </p>
-              <a
-                href={`https://wa.me/${WA_NUMBER}?text=${waText}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={t(["Contact the developer on WhatsApp", "تواصل مع المطور عبر واتساب"])}
-                className="press group relative flex min-h-16 items-center gap-3 overflow-hidden rounded-2xl bg-gradient-to-br from-[#25d366] to-[#128c7e] p-3 text-white shadow-[0_10px_28px_-12px_#25d366] transition-[filter] hover:brightness-110"
-              >
-                <span className="pointer-events-none absolute -end-6 -top-6 h-24 w-24 rounded-full bg-white/10" aria-hidden="true" />
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white shadow-md"><WhatsAppMark size={26} color="#25d366" /></span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] font-bold">{t(["Contact on WhatsApp", "تواصل عبر واتساب"])}</span>
-                  <span className="block text-xs text-white/85" dir="ltr">+44 7454 190643</span>
-                </span>
-                <ChevronDown size={20} className="-rotate-90 opacity-80 rtl:rotate-90" />
-              </a>
-            </div>
-          </Group>
-        </div>
-      </Modal>
+export default function App() {
+  const [initial, setInitial] = useState<Record<string, unknown> | null>(null);
 
-      <Modal
-        open={!!parsed}
-        onClose={() => setParsed(null)}
-        title={t(["Restore backup", "استعادة نسخة احتياطية"])}
-        footer={parsed ? (
-          <>
-            <Button variant="ghost" onClick={() => setParsed(null)}>{t(T.cancel)}</Button>
-            <Button disabled={busy} onClick={() => doImport("merge")}>{t(["Merge (keep my data)", "دمج (الإبقاء على بياناتي)"])}</Button>
-            <Button variant="danger" disabled={busy} onClick={() => doImport("replace")}>{t(["Replace all", "استبدال الكل"])}</Button>
-          </>
-        ) : undefined}
-      >
-        {parsed && (
-          <div className="space-y-3">
-            <Notice level="ok">{t(["The file is valid and was checked before import.", "الملف صالح وتم فحصه قبل الاستيراد."])}</Notice>
-            <ul className="space-y-1 text-sm">
-              <li>{t(["Saved codes", "الرموز المحفوظة"])}: <b>{parsed.counts.qr}</b></li>
-              <li>{t(["Templates", "القوالب"])}: <b>{parsed.counts.templates}</b></li>
-              <li>{t(["Categories", "التصنيفات"])}: <b>{parsed.counts.categories}</b></li>
-              <li>{t(["History items", "عناصر السجل"])}: <b>{parsed.counts.history}</b></li>
-              {parsed.exportedAt > 0 && <li>{t(["Created", "تاريخ الإنشاء"])}: <b>{formatDate(parsed.exportedAt, lang)}</b></li>}
-            </ul>
-            {parsed.counts.skipped > 0 && <Notice level="warn">{parsed.counts.skipped} {t(["invalid records were skipped.", "سجلات غير صالحة تم تخطيها."])}</Notice>}
-            <p className="text-xs leading-5 text-muted">{t(["Merge adds missing items without touching existing ones. Replace overwrites everything and asks for confirmation.", "الدمج يضيف العناصر الناقصة دون المساس بالموجود. الاستبدال يكتب فوق كل شيء ويطلب تأكيداً."])}</p>
-          </div>
-        )}
-      </Modal>
-    </>
+  useEffect(() => {
+    let alive = true;
+    loadSettings()
+      .then((s) => alive && setInitial(s))
+      .catch((e) => {
+        console.error("IndexedDB unavailable", e);
+        if (alive) setInitial({});
+      });
+    return () => { alive = false; };
+  }, []);
+
+  if (!initial) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-bg text-brand"><Spinner size={28} /></div>
+    );
+  }
+  return (
+    <AppProvider initial={initial}>
+      <ProjectProvider initial={initial}>
+        <Shell />
+      </ProjectProvider>
+    </AppProvider>
   );
 }
