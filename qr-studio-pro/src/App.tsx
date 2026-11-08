@@ -1,0 +1,167 @@
+import { Component, lazy, Suspense, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
+import { Clock, HardDrive, LayoutTemplate, Library, Palette, QrCode, ScanLine, Settings, Sparkles } from "lucide-react";
+import type { SectionId } from "./core/types";
+import { T } from "./core/i18n";
+import { loadSettings, storageEstimate } from "./db/db";
+import { formatBytes } from "./core/i18n";
+import { AppProvider, useApp } from "./state/AppContext";
+import { ProjectProvider } from "./state/ProjectContext";
+import { cn } from "./utils/cn";
+import CreateScreen from "./components/CreateScreen";
+import { ConfirmHost, IconBtn, Spinner, ToastHost } from "./components/ui";
+import { SettingsSheet } from "./components/SettingsSheet";
+
+const DesignEditor = lazy(() => import("./components/DesignEditor"));
+const ScannerScreen = lazy(() => import("./components/ScannerScreen"));
+const LibraryScreen = lazy(() => import("./components/LibraryScreen"));
+const HistoryScreen = lazy(() => import("./components/HistoryScreen"));
+const TemplatesScreen = lazy(() => import("./components/TemplatesScreen"));
+
+const NAV: { id: SectionId; label: readonly [string, string]; icon: typeof QrCode }[] = [
+  { id: "create", label: T.create, icon: Sparkles },
+  { id: "design", label: T.design, icon: Palette },
+  { id: "scan", label: T.scan, icon: ScanLine },
+  { id: "library", label: T.library, icon: Library },
+  { id: "history", label: T.history, icon: Clock },
+  { id: "templates", label: T.templates, icon: LayoutTemplate },
+];
+
+class Boundary extends Component<{ children: ReactNode; onReset: () => void }, { err: boolean }> {
+  state = { err: false };
+  static getDerivedStateFromError() {
+    return { err: true };
+  }
+  componentDidCatch(e: Error, info: ErrorInfo) {
+    console.error(e, info);
+  }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+        <p className="text-sm text-muted">Something went wrong · حدث خطأ غير متوقع</p>
+        <button type="button" className="press min-h-11 rounded-xl bg-brand px-5 text-white" onClick={() => { this.setState({ err: false }); this.props.onReset(); }}>
+          OK
+        </button>
+      </div>
+    );
+  }
+}
+
+function StorageChip() {
+  const { t, dataVersion, setSettingsOpen } = useApp();
+  const [s, setS] = useState<{ usage: number; quota: number } | null | undefined>(undefined);
+  useEffect(() => {
+    const id = setTimeout(() => storageEstimate().then(setS), 300);
+    return () => clearTimeout(id);
+  }, [dataVersion]);
+  const pct = s && s.quota ? (s.usage / s.quota) * 100 : 0;
+  return (
+    <button
+      type="button"
+      onClick={() => setSettingsOpen(true)}
+      title={t(["Local storage status", "حالة التخزين المحلي"])}
+      aria-label={t(["Local storage status", "حالة التخزين المحلي"])}
+      className="press hidden min-h-9 items-center gap-1.5 rounded-full border border-line bg-surface2/60 px-3 text-[12px] text-muted sm:flex"
+    >
+      <HardDrive size={14} />
+      <span className={cn("h-2 w-2 rounded-full", s === null ? "bg-warn" : pct > 85 ? "bg-bad" : "bg-ok")} />
+      <span dir="ltr" className="tabular-nums">{s ? formatBytes(s.usage) : s === null ? "IndexedDB" : "…"}</span>
+    </button>
+  );
+}
+
+function Shell() {
+  const { t, lang, setLang, section, go, setSettingsOpen } = useApp();
+  const [boundaryKey, setBoundaryKey] = useState(0);
+
+  const screen = (() => {
+    switch (section) {
+      case "design": return <DesignEditor />;
+      case "scan": return <ScannerScreen />;
+      case "library": return <LibraryScreen />;
+      case "history": return <HistoryScreen />;
+      case "templates": return <TemplatesScreen />;
+      default: return <CreateScreen />;
+    }
+  })();
+
+  return (
+    <div className="fixed inset-0 flex flex-col bg-bg text-fg" style={{ paddingTop: "env(safe-area-inset-top)", paddingLeft: "env(safe-area-inset-left)", paddingRight: "env(safe-area-inset-right)" }}>
+      {/* Top bar */}
+      <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-line bg-surface/90 px-3 md:px-5">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand to-brand2 text-white shadow-[0_6px_16px_-6px_var(--c-brand)]"><QrCode size={20} /></div>
+        <h1 className="min-w-0 flex-1 truncate text-[17px] font-extrabold tracking-tight">QR Studio <span className="text-brand">Pro</span></h1>
+        <StorageChip />
+        <button type="button" onClick={() => setLang(lang === "ar" ? "en" : "ar")} className="press min-h-10 min-w-10 rounded-xl border border-line bg-surface2/60 px-3 text-sm font-bold" aria-label={t(["Switch language", "تبديل اللغة"])} title={t(["Switch language", "تبديل اللغة"])}>
+          {lang === "ar" ? "EN" : "ع"}
+        </button>
+        <IconBtn label={t(T.settings)} onClick={() => setSettingsOpen(true)}><Settings size={22} /></IconBtn>
+      </header>
+
+      <div className="flex min-h-0 flex-1">
+        {/* Side navigation (tablet / desktop) */}
+        <nav aria-label={t(["Main navigation", "التنقل الرئيسي"])} className="hidden w-[84px] shrink-0 flex-col items-stretch gap-1 border-e border-line bg-surface/60 p-2 md:flex lg:w-[200px]">
+          {NAV.map((n) => (
+            <button key={n.id} type="button" onClick={() => go(n.id)} aria-current={section === n.id ? "page" : undefined} className={cn("press flex min-h-12 items-center justify-center gap-3 rounded-xl px-2 text-[13px] font-medium lg:justify-start lg:px-3.5", section === n.id ? "bg-brand/15 text-brand" : "text-muted hover:bg-surface2 hover:text-fg")}>
+              <n.icon size={21} />
+              <span className="hidden lg:inline">{t(n.label)}</span>
+            </button>
+          ))}
+        </nav>
+
+        <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+          <Boundary key={boundaryKey} onReset={() => { setBoundaryKey((k) => k + 1); go("create"); }}>
+            <div key={section} className="anim-fade-in h-full">
+              <Suspense fallback={<div className="flex h-full items-center justify-center gap-2 text-muted"><Spinner />{t(T.loading)}</div>}>
+                {screen}
+              </Suspense>
+            </div>
+          </Boundary>
+        </main>
+      </div>
+
+      {/* Bottom navigation (phones) */}
+      <nav aria-label={t(["Main navigation", "التنقل الرئيسي"])} className="flex shrink-0 border-t border-line bg-surface md:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        {NAV.map((n) => (
+          <button key={n.id} type="button" onClick={() => go(n.id)} aria-current={section === n.id ? "page" : undefined} className={cn("press relative flex min-h-[58px] flex-1 flex-col items-center justify-center gap-0.5 text-[10.5px] font-medium", section === n.id ? "text-brand" : "text-muted")}>
+            {section === n.id && <span className="anim-fade-in absolute top-0 h-0.5 w-8 rounded-full bg-brand" />}
+            <n.icon size={22} strokeWidth={section === n.id ? 2.4 : 2} />
+            <span className="max-w-full truncate px-0.5">{t(n.label)}</span>
+          </button>
+        ))}
+      </nav>
+
+      <SettingsSheet />
+      <ConfirmHost />
+      <ToastHost />
+    </div>
+  );
+}
+
+export default function App() {
+  const [initial, setInitial] = useState<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    loadSettings()
+      .then((s) => alive && setInitial(s))
+      .catch((e) => {
+        console.error("IndexedDB unavailable", e);
+        if (alive) setInitial({});
+      });
+    return () => { alive = false; };
+  }, []);
+
+  if (!initial) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-bg text-brand"><Spinner size={28} /></div>
+    );
+  }
+  return (
+    <AppProvider initial={initial}>
+      <ProjectProvider initial={initial}>
+        <Shell />
+      </ProjectProvider>
+    </AppProvider>
+  );
+}
