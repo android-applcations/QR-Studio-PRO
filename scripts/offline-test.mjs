@@ -107,6 +107,26 @@ const browser = await puppeteer.launch({
 
 const page = await browser.newPage();
 await page.setViewport({ width: 1400, height: 1000 });
+
+// Count UI sounds without needing an audio device: every sound creates a buffer source.
+await page.evaluateOnNewDocument(() => {
+  window.__audio = { contexts: 0, sounds: 0 };
+  const Orig = window.AudioContext || window.webkitAudioContext;
+  if (!Orig) return;
+  const Wrapped = function (...args) {
+    const ctx = new Orig(...args);
+    window.__audio.contexts++;
+    const origBuf = ctx.createBufferSource.bind(ctx);
+    ctx.createBufferSource = () => {
+      window.__audio.sounds++;
+      return origBuf();
+    };
+    return ctx;
+  };
+  Wrapped.prototype = Orig.prototype;
+  window.AudioContext = Wrapped;
+  window.webkitAudioContext = Wrapped;
+});
 page.on("console", (m) => {
   if (m.type() === "error") consoleErrors.push(m.text().slice(0, 250));
 });
@@ -221,6 +241,50 @@ try {
 
   check('online: ConnectionStatus reports "Offline ready"', await hasText("Offline ready", 25000));
 
+  // ---- interface sounds (generated offline, sharia-safe clicks)
+  await page.evaluate(() => {
+    window.__audio.sounds = 0;
+  });
+  await page.evaluate(() => {
+    const nav = document.querySelectorAll('nav[aria-label="Main navigation"]')[0];
+    nav.querySelectorAll("button")[1].click(); // design
+  });
+  await sleep(900);
+  const soundsOn = await page.evaluate(() => window.__audio.sounds);
+  check("sounds: UI actions play a sound", soundsOn > 0, `sounds=${soundsOn}`);
+
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll("button")].find((e) => (e.getAttribute("aria-label") || "").includes("Settings"));
+    b?.click();
+  });
+  await sleep(900);
+  await clickText("Interface sounds", "button");
+  await sleep(600);
+  await page.keyboard.press("Escape");
+  await sleep(600);
+  await page.evaluate(() => {
+    window.__audio.sounds = 0;
+  });
+  await page.evaluate(() => {
+    const nav = document.querySelectorAll('nav[aria-label="Main navigation"]')[0];
+    nav.querySelectorAll("button")[2].click(); // scan
+    nav.querySelectorAll("button")[0].click(); // create
+  });
+  await sleep(900);
+  const soundsOff = await page.evaluate(() => window.__audio.sounds);
+  check("sounds: the setting really mutes them", soundsOff === 0, `sounds=${soundsOff}`);
+
+  // restore sounds for the rest of the run
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll("button")].find((e) => (e.getAttribute("aria-label") || "").includes("Settings"));
+    b?.click();
+  });
+  await sleep(900);
+  await clickText("Interface sounds", "button");
+  await sleep(500);
+  await page.keyboard.press("Escape");
+  await sleep(700);
+
   const cdp = await page.createCDPSession();
   const manifestInfo = await cdp.send("Page.getAppManifest");
   check(
@@ -296,6 +360,16 @@ try {
   await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
   check("offline: app boots from the precache", await hasText("QR Studio", 25000));
   check("offline: no error boundary", await noCrash());
+
+  const notInstalled = await page.evaluate(() => ({
+    standalone: window.matchMedia("(display-mode: standalone)").matches,
+    controlled: !!navigator.serviceWorker?.controller,
+  }));
+  check(
+    "offline: works with no network in a plain browser tab, without installing",
+    notInstalled.controlled && !notInstalled.standalone,
+    JSON.stringify(notInstalled),
+  );
 
   const shell = await page.evaluate(() => ({
     title: document.title,
@@ -540,6 +614,51 @@ try {
   check(
     "update: waiting worker activated",
     !(await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting)),
+  );
+
+  // ---- switching between online and offline must never reload the page
+  await page.goto(`${BASE}/?section=library`, { waitUntil: "networkidle2", timeout: 40000 });
+  await page.waitForFunction(() => !!navigator.serviceWorker?.controller, { timeout: 25000 });
+  await sleep(1200);
+  await page.evaluate(() => {
+    window.__alive = "alive";
+    window.__navCount = 0;
+  });
+  let navigations = 0;
+  const onNav = (frame) => {
+    if (frame === page.mainFrame()) navigations++;
+  };
+  page.on("framenavigated", onNav);
+
+  const states = [];
+  for (const offline of [true, false, true, false]) {
+    await page.setOfflineMode(offline);
+    await sleep(2000);
+    states.push(
+      await page.evaluate(() => ({
+        online: navigator.onLine,
+        text: (document.querySelector('[role="status"]')?.textContent || "").trim().slice(0, 30),
+        alive: window.__alive,
+        rows: (document.body.innerText || "").length,
+      })),
+    );
+  }
+  page.off("framenavigated", onNav);
+  const after = await page.evaluate(() => ({ alive: window.__alive, nav: window.__navCount }));
+  check(
+    "connectivity: toggling online/offline never reloads the page",
+    after.alive === "alive" && navigations === 0,
+    `alive=${after.alive} navigations=${navigations}`,
+  );
+  check(
+    "connectivity: the app keeps working across every switch",
+    states.every((s) => s.alive === "alive" && s.rows > 100),
+    JSON.stringify(states.map((s) => s.rows)),
+  );
+  check(
+    "connectivity: the status chip follows the real state",
+    states[0].text.includes("Offline") && states[3].text.includes("Online"),
+    JSON.stringify(states.map((s) => s.text)),
   );
 
   const realErrors = consoleErrors.filter(

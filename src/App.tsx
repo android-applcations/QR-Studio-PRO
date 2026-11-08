@@ -7,6 +7,7 @@ import { formatBytes } from "./core/i18n";
 import { AppProvider, useApp } from "./state/AppContext";
 import { ProjectProvider } from "./state/ProjectContext";
 import { cn } from "./utils/cn";
+import { playSound } from "./core/sound";
 import CreateScreen from "./components/CreateScreen";
 import { ConfirmHost, IconBtn, Spinner, ToastHost } from "./components/ui";
 import { SettingsSheet } from "./components/SettingsSheet";
@@ -130,6 +131,12 @@ function Shell() {
   const [boundaryKey, setBoundaryKey] = useState(0);
   usePreloadScreens();
 
+  // Only the section change makes a sound: navigating is a distinct action.
+  const navigate = (id: SectionId) => {
+    if (id !== section) playSound("nav");
+    go(id);
+  };
+
   const screen = (() => {
     switch (section) {
       case "design": return <DesignEditor />;
@@ -150,7 +157,7 @@ function Shell() {
         <ConnectionStatus className="hidden md:flex" />
         <StorageChip />
         <InstallButton compact />
-        <button type="button" onClick={() => setLang(lang === "ar" ? "en" : "ar")} className="press min-h-10 min-w-10 rounded-xl border border-line bg-surface2/60 px-3 text-sm font-bold" aria-label={t(["Switch language", "تبديل اللغة"])} title={t(["Switch language", "تبديل اللغة"])}>
+        <button type="button" onClick={() => { playSound("nav"); setLang(lang === "ar" ? "en" : "ar"); }} className="press min-h-10 min-w-10 rounded-xl border border-line bg-surface2/60 px-3 text-sm font-bold" aria-label={t(["Switch language", "تبديل اللغة"])} title={t(["Switch language", "تبديل اللغة"])}>
           {lang === "ar" ? "EN" : "ع"}
         </button>
         <IconBtn label={t(T.settings)} onClick={() => setSettingsOpen(true)}><Settings size={22} /></IconBtn>
@@ -160,7 +167,7 @@ function Shell() {
         {/* Side navigation (tablet / desktop) */}
         <nav aria-label={t(["Main navigation", "التنقل الرئيسي"])} className="hidden w-[84px] shrink-0 flex-col items-stretch gap-1 border-e border-line bg-surface/60 p-2 md:flex lg:w-[200px]">
           {NAV.map((n) => (
-            <button key={n.id} type="button" onClick={() => go(n.id)} aria-current={section === n.id ? "page" : undefined} className={cn("press flex min-h-12 items-center justify-center gap-3 rounded-xl px-2 text-[13px] font-medium lg:justify-start lg:px-3.5", section === n.id ? "bg-brand/15 text-brand" : "text-muted hover:bg-surface2 hover:text-fg")}>
+            <button key={n.id} type="button" onClick={() => navigate(n.id)} aria-current={section === n.id ? "page" : undefined} className={cn("press flex min-h-12 items-center justify-center gap-3 rounded-xl px-2 text-[13px] font-medium lg:justify-start lg:px-3.5", section === n.id ? "bg-brand/15 text-brand" : "text-muted hover:bg-surface2 hover:text-fg")}>
               <n.icon size={21} />
               <span className="hidden lg:inline">{t(n.label)}</span>
             </button>
@@ -181,7 +188,7 @@ function Shell() {
       {/* Bottom navigation (phones) */}
       <nav aria-label={t(["Main navigation", "التنقل الرئيسي"])} className="flex shrink-0 border-t border-line bg-surface md:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         {NAV.map((n) => (
-          <button key={n.id} type="button" onClick={() => go(n.id)} aria-current={section === n.id ? "page" : undefined} className={cn("press relative flex min-h-[58px] flex-1 flex-col items-center justify-center gap-0.5 text-[10.5px] font-medium", section === n.id ? "text-brand" : "text-muted")}>
+          <button key={n.id} type="button" onClick={() => navigate(n.id)} aria-current={section === n.id ? "page" : undefined} className={cn("press relative flex min-h-[58px] flex-1 flex-col items-center justify-center gap-0.5 text-[10.5px] font-medium", section === n.id ? "text-brand" : "text-muted")}>
             {section === n.id && <span className="anim-fade-in absolute top-0 h-0.5 w-8 rounded-full bg-brand" />}
             <n.icon size={22} strokeWidth={section === n.id ? 2.4 : 2} />
             <span className="max-w-full truncate px-0.5">{t(n.label)}</span>

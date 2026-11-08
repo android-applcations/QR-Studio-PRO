@@ -1,7 +1,8 @@
-import { memo, useEffect, useId, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useId, useRef, type ButtonHTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, Info, X } from "lucide-react";
 import { cn } from "../utils/cn";
 import { useApp } from "../state/AppContext";
+import { playSound } from "../core/sound";
 import { T } from "../core/i18n";
 import type { Tx } from "../core/types";
 
@@ -22,11 +23,19 @@ const VARIANTS: Record<Variant, string> = {
   success: "bg-[#25d366] text-[#06210f] font-semibold hover:brightness-105",
 };
 
-export function Button({ variant = "soft", size = "md", icon, full, className, children, ...rest }: BtnProps) {
+export function Button({ variant = "soft", size = "md", icon, full, className, children, onClick, ...rest }: BtnProps) {
+  const handleClick = useCallback(
+    (e: MouseEvent<HTMLButtonElement>) => {
+      playSound("tap");
+      onClick?.(e);
+    },
+    [onClick],
+  );
   return (
     <button
       type="button"
       {...rest}
+      onClick={handleClick}
       className={cn(
         "press inline-flex select-none items-center justify-center gap-2 rounded-xl font-medium disabled:pointer-events-none disabled:opacity-45",
         size === "sm" ? "min-h-9 px-3 text-[13px]" : size === "lg" ? "min-h-12 px-5 text-[15px]" : "min-h-11 px-4 text-sm",
@@ -41,13 +50,21 @@ export function Button({ variant = "soft", size = "md", icon, full, className, c
   );
 }
 
-export function IconBtn({ label, className, children, active, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean }) {
+export function IconBtn({ label, className, children, active, onClick, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean }) {
+  const handleClick = useCallback(
+    (e: MouseEvent<HTMLButtonElement>) => {
+      playSound("tap");
+      onClick?.(e);
+    },
+    [onClick],
+  );
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
       {...rest}
+      onClick={handleClick}
       className={cn(
         "press inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-muted hover:bg-surface2 hover:text-fg disabled:pointer-events-none disabled:opacity-40",
         active && "bg-brand/15 text-brand",
@@ -139,7 +156,16 @@ export const inputCls = (invalid?: boolean) =>
 
 export function Toggle({ checked, onChange, label, desc }: { checked: boolean; onChange: (v: boolean) => void; label: string; desc?: string }) {
   return (
-    <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="press flex min-h-12 w-full items-center justify-between gap-3 rounded-xl px-1 text-start">
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => {
+        playSound("toggle");
+        onChange(!checked);
+      }}
+      className="press flex min-h-12 w-full items-center justify-between gap-3 rounded-xl px-1 text-start"
+    >
       <span className="min-w-0">
         <span className="block text-sm font-medium">{label}</span>
         {desc && <span className="block text-xs text-muted">{desc}</span>}
@@ -161,7 +187,10 @@ export function Segmented<V extends string>({ value, onChange, options, label }:
           role="radio"
           aria-checked={value === o.value}
           title={o.title}
-          onClick={() => onChange(o.value)}
+          onClick={() => {
+            playSound("toggle");
+            onChange(o.value);
+          }}
           className={cn("press flex min-h-9 flex-1 items-center justify-center gap-1 rounded-lg px-2 text-[13px] font-medium", value === o.value ? "bg-brand text-white shadow" : "text-muted hover:text-fg")}
         >
           {o.label}

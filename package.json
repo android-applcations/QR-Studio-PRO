@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.sw.json",
     "check:build": "node scripts/check-build.mjs",
     "verify": "npm run typecheck && npm run build && npm run check:build",
-    "test:offline": "node scripts/offline-test.mjs"
+    "test:offline": "node scripts/offline-test.mjs",
+    "test:layout": "node scripts/mobile-layout-test.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",

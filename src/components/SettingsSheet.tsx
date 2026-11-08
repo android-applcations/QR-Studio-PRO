@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Database, Download, FileUp, HardDrive, History, Info, Languages, Moon, Palette, RefreshCw, ScrollText, ShieldCheck, Sun, Trash2, Monitor, Wifi } from "lucide-react";
+import { ChevronDown, Database, Download, FileUp, HardDrive, History, Info, Languages, Moon, Palette, RefreshCw, ScrollText, ShieldCheck, Sun, Trash2, Monitor, Volume2, Wifi } from "lucide-react";
 import { PRIVACY, T, TERMS, formatBytes, formatDate, pick, type LegalDoc } from "../core/i18n";
 import type { Lang, ThemeMode } from "../core/types";
 import { DB_VERSION, clearHistory, exportBackup, importBackup, parseBackup, requestPersistence, storageEstimate, wipeAll, type ParsedBackup } from "../db/db";
@@ -48,7 +48,7 @@ function Legal({ doc, lang }: { doc: LegalDoc; lang: Lang }) {
 }
 
 export function SettingsSheet() {
-  const { t, lang, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, settingsOpen, setSettingsOpen, toast, fail, confirm, bumpData, dataVersion } = useApp();
+  const { t, lang, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, sounds, setSounds, settingsOpen, setSettingsOpen, toast, fail, confirm, bumpData, dataVersion } = useApp();
   const { needRefresh, installed, swActive, updateNow, checkForUpdates } = usePwa();
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
   const [parsed, setParsed] = useState<ParsedBackup | null>(null);
@@ -156,6 +156,18 @@ export function SettingsSheet() {
             <Segmented value={theme} onChange={setTheme} label={t(["Appearance", "المظهر"])} options={themes} />
           </Group>
 
+          <Group icon={<Volume2 size={17} />} title={t(["Sounds", "الأصوات"])}>
+            <Toggle
+              checked={sounds}
+              onChange={setSounds}
+              label={t(["Interface sounds", "أصوات الواجهة"])}
+              desc={t([
+                "Light taps for taps, navigation and confirmations. Clicks only — no music, no instruments, no melodies.",
+                "نقرات خفيفة عند الضغط والتنقل والتأكيد. نقرات فقط — بدون موسيقى أو آلات أو ألحان.",
+              ])}
+            />
+          </Group>
+
           <Group icon={<Wifi size={17} />} title={t(["Offline & updates", "دون إنترنت والتحديثات"])}>
             <div className="space-y-2.5">
               <div className="flex flex-wrap items-center gap-2">
@@ -244,7 +256,7 @@ export function SettingsSheet() {
                 <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white shadow-md"><WhatsAppMark size={26} color="#25d366" /></span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[15px] font-bold">{t(["Contact on WhatsApp", "تواصل عبر واتساب"])}</span>
-                  <span className="block text-xs text-white/85" dir="ltr">+44 7454 190643</span>
+                  <span className="block text-xs text-white/85">{t(["Open the developer chat", "فتح محادثة المطور"])}</span>
                 </span>
                 <ChevronDown size={20} className="-rotate-90 opacity-80 rtl:rotate-90" />
               </a>
