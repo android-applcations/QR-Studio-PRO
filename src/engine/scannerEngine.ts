@@ -138,10 +138,20 @@ export async function decodeImageFile(file: File): Promise<string[]> {
 
 // ---------- Live camera ----------
 
-export type CameraErrorKind = "denied" | "none" | "busy" | "insecure" | "unknown";
+export type CameraErrorKind = "denied" | "none" | "busy" | "insecure" | "unsupported" | "unknown";
+
+/** True when the browser exposes getUserMedia in a secure context (HTTPS or localhost). */
+export function cameraSupported(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    typeof navigator.mediaDevices?.getUserMedia === "function" &&
+    (typeof window === "undefined" || window.isSecureContext !== false)
+  );
+}
 
 export function cameraErrorKind(e: unknown): CameraErrorKind {
   const name = (e as { name?: string })?.name;
+  if ((e as Error)?.message === "UNSUPPORTED") return "unsupported";
   if ((e as Error)?.message === "INSECURE") return "insecure";
   if (name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError") return "denied";
   if (name === "NotFoundError" || name === "OverconstrainedError" || name === "DevicesNotFoundError") return "none";
@@ -161,6 +171,8 @@ export class CameraSession {
   private tick = 0;
   private running = false;
   private frame = 0;
+  private video: HTMLVideoElement | null = null;
+  private onTrackEnded: (() => void) | null = null;
 
   static async listCameras(): Promise<MediaDeviceInfo[]> {
     try {
@@ -172,8 +184,11 @@ export class CameraSession {
   }
 
   async start(video: HTMLVideoElement, opts: { deviceId?: string; facing?: "environment" | "user" }): Promise<CameraCaps> {
-    if (!navigator.mediaDevices?.getUserMedia) throw new Error("INSECURE");
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error(window.isSecureContext === false ? "INSECURE" : "UNSUPPORTED");
+    }
     this.stop();
+    this.video = video;
     const base: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 } };
     const video_: MediaTrackConstraints = opts.deviceId
       ? { ...base, deviceId: { exact: opts.deviceId } }
@@ -189,6 +204,12 @@ export class CameraSession {
     video.muted = true;
     video.setAttribute("playsinline", "true");
     await video.play();
+    // If the device loses the camera (unplugged, taken by another app) stop decoding.
+    const track = this.stream.getVideoTracks()[0];
+    if (track) {
+      this.onTrackEnded = () => this.pauseLoop();
+      track.addEventListener("ended", this.onTrackEnded);
+    }
     return this.capabilities();
   }
 
@@ -256,9 +277,23 @@ export class CameraSession {
     cancelAnimationFrame(this.tick);
   }
 
+  /** Releases the MediaStream completely: stops every track and detaches the video. */
   stop(): void {
     this.pauseLoop();
+    const track = this.stream?.getVideoTracks()[0];
+    if (track && this.onTrackEnded) {
+      track.removeEventListener("ended", this.onTrackEnded);
+      this.onTrackEnded = null;
+    }
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
+    if (this.video) {
+      try {
+        this.video.srcObject = null;
+      } catch {
+        /* some browsers throw on a detached element */
+      }
+      this.video = null;
+    }
   }
 }

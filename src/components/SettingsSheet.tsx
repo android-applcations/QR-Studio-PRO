@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Database, Download, FileUp, HardDrive, History, Info, Languages, Moon, Palette, ScrollText, ShieldCheck, Sun, Trash2, Monitor } from "lucide-react";
+import { ChevronDown, Database, Download, FileUp, HardDrive, History, Info, Languages, Moon, Palette, RefreshCw, ScrollText, ShieldCheck, Sun, Trash2, Monitor, Wifi } from "lucide-react";
 import { PRIVACY, T, TERMS, formatBytes, formatDate, pick, type LegalDoc } from "../core/i18n";
 import type { Lang, ThemeMode } from "../core/types";
 import { DB_VERSION, clearHistory, exportBackup, importBackup, parseBackup, requestPersistence, storageEstimate, wipeAll, type ParsedBackup } from "../db/db";
 import { useApp } from "../state/AppContext";
+import { usePwa } from "../pwa/PwaProvider";
 import { downloadBlob, timestampName } from "../engine/exportEngine";
 import { cn } from "../utils/cn";
 import { WhatsAppMark } from "./BrandIcon";
+import ConnectionStatus from "./ConnectionStatus";
+import InstallButton from "./InstallButton";
 import { Button, Modal, Notice, Segmented, Toggle } from "./ui";
 
 const WA_NUMBER = "447454190643";
@@ -46,14 +49,44 @@ function Legal({ doc, lang }: { doc: LegalDoc; lang: Lang }) {
 
 export function SettingsSheet() {
   const { t, lang, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, settingsOpen, setSettingsOpen, toast, fail, confirm, bumpData, dataVersion } = useApp();
+  const { needRefresh, installed, swActive, updateNow, checkForUpdates } = usePwa();
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
   const [parsed, setParsed] = useState<ParsedBackup | null>(null);
   const [busy, setBusy] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (settingsOpen) storageEstimate().then(setStorage);
   }, [settingsOpen, dataVersion]);
+
+  const doUpdate = async () => {
+    const ok = await confirm({
+      title: ["Update the app?", "تحديث التطبيق؟"],
+      message: [
+        "The app will reload to apply the new version. Your saved codes, designs and history stay on this device.",
+        "سيتم إعادة تحميل التطبيق لتطبيق الإصدار الجديد. تبقى رموزك وتصاميمك وسجلك على هذا الجهاز.",
+      ],
+      confirmLabel: ["Update now", "تحديث الآن"],
+    });
+    if (!ok) return;
+    setUpdating(true);
+    try {
+      await updateNow();
+    } finally {
+      setTimeout(() => setUpdating(false), 4000);
+    }
+  };
+
+  const doCheckUpdates = async () => {
+    setUpdating(true);
+    try {
+      await checkForUpdates();
+      toast(t(["Checked for updates", "تم التحقق من التحديثات"]), needRefresh ? "ok" : "info");
+    } finally {
+      setUpdating(false);
+    }
+  };
 
   const doExport = async () => {
     setBusy(true);
@@ -121,6 +154,37 @@ export function SettingsSheet() {
 
           <Group icon={<Palette size={17} />} title={t(["Appearance", "المظهر"])}>
             <Segmented value={theme} onChange={setTheme} label={t(["Appearance", "المظهر"])} options={themes} />
+          </Group>
+
+          <Group icon={<Wifi size={17} />} title={t(["Offline & updates", "دون إنترنت والتحديثات"])}>
+            <div className="space-y-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <ConnectionStatus autoHideReadyMs={0} />
+                <InstallButton />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {needRefresh ? (
+                  <Button variant="primary" disabled={updating} onClick={doUpdate} icon={<RefreshCw size={17} />}>{t(["Update now", "تحديث الآن"])}</Button>
+                ) : (
+                  <Button disabled={updating} onClick={doCheckUpdates} icon={<RefreshCw size={17} />}>{t(["Check for updates", "التحقق من التحديثات"])}</Button>
+                )}
+              </div>
+              <p className="text-xs leading-5 text-muted">
+                {t(
+                  [
+                    "After the first visit the whole app is stored on this device, so it opens and works with no connection. Updating never touches your saved codes.",
+                    "بعد أول زيارة يُخزَّن التطبيق بالكامل على جهازك، فيفتح ويعمل بدون اتصال. التحديث لا يمس رموزك المحفوظة.",
+                  ],
+                )}
+              </p>
+              <p className="text-xs text-muted" dir="ltr">
+                {swActive
+                  ? installed
+                    ? "· Installed · offline cache active"
+                    : "· Offline cache active"
+                  : "· Offline cache not active yet"}
+              </p>
+            </div>
           </Group>
 
           <Group icon={<Database size={17} />} title={t(["Backup & restore", "النسخ الاحتياطي والاستعادة"])}>

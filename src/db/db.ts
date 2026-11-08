@@ -69,6 +69,30 @@ class AppDB extends Dexie {
 
 export const db = new AppDB();
 
+// ---------- In-flight write tracking ----------
+// Lets the app defer a destructive action (e.g. the page reload that applies a
+// service-worker update) until every pending IndexedDB write has settled.
+// Pure bookkeeping: it does not change the schema, the database name or any data.
+let pendingWrites = 0;
+
+function track<T>(p: Promise<T>): Promise<T> {
+  pendingWrites++;
+  const done = () => {
+    pendingWrites = Math.max(0, pendingWrites - 1);
+  };
+  p.then(done, done);
+  return p;
+}
+
+/** Resolves true when no IndexedDB write is in flight (or after `timeoutMs`). */
+export async function whenWritesIdle(timeoutMs = 6000): Promise<boolean> {
+  const start = Date.now();
+  while (pendingWrites > 0 && Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 80));
+  }
+  return pendingWrites === 0;
+}
+
 export class AppError extends Error {
   constructor(public tx: Tx, public code: string) {
     super(code);
@@ -96,13 +120,13 @@ export async function loadSettings(): Promise<Record<string, unknown>> {
   const rows = await db.settings.toArray();
   return Object.fromEntries(rows.map((r) => [r.key, r.value]));
 }
-export const putSetting = (key: string, value: unknown) => db.settings.put({ key, value });
+export const putSetting = (key: string, value: unknown) => track(db.settings.put({ key, value }));
 
 // ---------- QR codes ----------
 const designKey = (r: Pick<QrRecord, "design_config">) => JSON.stringify(r.design_config);
 
 export async function saveQr(input: Omit<QrRecord, "id" | "uid" | "created_at" | "updated_at" | "favorite" | "category" | "description"> & Partial<QrRecord>): Promise<QrRecord> {
-  return db.transaction("rw", db.qr_codes, async () => {
+  return track(db.transaction("rw", db.qr_codes, async () => {
     const now = Date.now();
     if (input.id != null) {
       const cur = await db.qr_codes.get(input.id);
@@ -131,19 +155,19 @@ export async function saveQr(input: Omit<QrRecord, "id" | "uid" | "created_at" |
     delete rec.id;
     rec.id = await db.qr_codes.add(rec);
     return rec;
-  });
+  }));
 }
 
 export const listQr = () => db.qr_codes.toArray();
 export const getQr = (id: number) => db.qr_codes.get(id);
-export const deleteQr = (ids: number[]) => db.qr_codes.bulkDelete(ids);
-export const restoreQr = (recs: QrRecord[]) => db.qr_codes.bulkPut(recs);
-export const patchQr = (id: number, patch: Partial<QrRecord>) => db.qr_codes.update(id, { ...patch, updated_at: Date.now() });
+export const deleteQr = (ids: number[]) => track(db.qr_codes.bulkDelete(ids));
+export const restoreQr = (recs: QrRecord[]) => track(db.qr_codes.bulkPut(recs));
+export const patchQr = (id: number, patch: Partial<QrRecord>) => track(db.qr_codes.update(id, { ...patch, updated_at: Date.now() }));
 export const patchManyQr = (ids: number[], patch: Partial<QrRecord>) =>
-  db.transaction("rw", db.qr_codes, async () => {
+  track(db.transaction("rw", db.qr_codes, async () => {
     const now = Date.now();
     await Promise.all(ids.map((id) => db.qr_codes.update(id, { ...patch, updated_at: now })));
-  });
+  }));
 
 export async function duplicateQr(id: number, suffix: string): Promise<QrRecord | null> {
   const cur = await db.qr_codes.get(id);
@@ -157,7 +181,7 @@ export async function duplicateQr(id: number, suffix: string): Promise<QrRecord 
 
 // ---------- History ----------
 export async function addHistory(rec: Omit<HistoryRecord, "id">): Promise<void> {
-  await db.transaction("rw", db.scan_history, async () => {
+  await track(db.transaction("rw", db.scan_history, async () => {
     const last = await db.scan_history.orderBy("scanned_at").last();
     if (last && last.content === rec.content && last.action === rec.action && rec.scanned_at - last.scanned_at < 4000) return;
     await db.scan_history.add(rec as HistoryRecord);
@@ -166,21 +190,21 @@ export async function addHistory(rec: Omit<HistoryRecord, "id">): Promise<void> 
       const old = await db.scan_history.orderBy("scanned_at").limit(count - 2000).primaryKeys();
       await db.scan_history.bulkDelete(old);
     }
-  });
+  }));
 }
 export const listHistory = () => db.scan_history.orderBy("scanned_at").reverse().toArray();
-export const deleteHistory = (ids: number[]) => db.scan_history.bulkDelete(ids);
-export const clearHistory = () => db.scan_history.clear();
-export const restoreHistory = (recs: HistoryRecord[]) => db.scan_history.bulkPut(recs);
+export const deleteHistory = (ids: number[]) => track(db.scan_history.bulkDelete(ids));
+export const clearHistory = () => track(db.scan_history.clear());
+export const restoreHistory = (recs: HistoryRecord[]) => track(db.scan_history.bulkPut(recs));
 
 // ---------- Templates ----------
 export const listTemplates = () => db.templates.orderBy("created_at").reverse().toArray();
 export async function addTemplate(name: string, design: QrRecord["design_config"]): Promise<TemplateRecord> {
   const rec: TemplateRecord = { uid: uid(), name, design_config: design, created_at: Date.now() };
-  rec.id = await db.templates.add(rec);
+  rec.id = await track(db.templates.add(rec));
   return rec;
 }
-export const deleteTemplate = (id: number) => db.templates.delete(id);
+export const deleteTemplate = (id: number) => track(db.templates.delete(id));
 
 // ---------- Categories ----------
 export const listCategories = () => db.categories.orderBy("created_at").toArray();
@@ -188,20 +212,20 @@ export async function addCategory(name: string): Promise<void> {
   const clean = name.trim().slice(0, 40);
   if (!clean) return;
   if (await db.categories.where("name").equals(clean).first()) throw new AppError(["Category already exists", "التصنيف موجود مسبقاً"], "DUP");
-  await db.categories.add({ name: clean, created_at: Date.now() });
+  await track(db.categories.add({ name: clean, created_at: Date.now() }));
 }
 export async function deleteCategory(id: number): Promise<void> {
-  await db.transaction("rw", db.categories, db.qr_codes, async () => {
+  await track(db.transaction("rw", db.categories, db.qr_codes, async () => {
     const cat = await db.categories.get(id);
     if (!cat) return;
     await db.qr_codes.where("category").equals(cat.name).modify({ category: "" });
     await db.categories.delete(id);
-  });
+  }));
 }
 
 // ---------- Assets (logo blobs) ----------
 export async function saveAsset(blob: Blob): Promise<number> {
-  return db.assets.add({ blob, created_at: Date.now() });
+  return track(db.assets.add({ blob, created_at: Date.now() }));
 }
 const logoCache = new Map<number, string>();
 export async function getLogoDataUrl(id: number): Promise<string | null> {
@@ -219,12 +243,12 @@ export function primeLogoCache(id: number, url: string) {
 
 // ---------- Batches ----------
 export async function saveBatch(name: string, items: Omit<QrRecord, "id" | "uid" | "batchId" | "created_at" | "updated_at">[]): Promise<number> {
-  return db.transaction("rw", db.qr_batches, db.qr_codes, async () => {
+  return track(db.transaction("rw", db.qr_batches, db.qr_codes, async () => {
     const now = Date.now();
     const batchId = await db.qr_batches.add({ name, created_at: now, items_count: items.length });
     await db.qr_codes.bulkAdd(items.map((it, i) => ({ ...it, uid: uid(), batchId, created_at: now + i, updated_at: now + i }) as QrRecord));
     return batchId;
-  });
+  }));
 }
 
 // ---------- Stats & storage ----------
@@ -277,9 +301,9 @@ export async function requestPersistence(): Promise<boolean> {
 }
 
 export async function wipeAll(): Promise<void> {
-  await db.transaction("rw", db.tables, async () => {
+  await track(db.transaction("rw", db.tables, async () => {
     for (const t of db.tables) await t.clear();
-  });
+  }));
 }
 
 // ---------- Backup ----------
@@ -420,7 +444,7 @@ export async function importBackup(p: ParsedBackup, mode: "merge" | "replace"): 
   const assetBlobs = new Map<number, Blob>();
   for (const a of d.assets) assetBlobs.set(a.id, await dataUrlToBlob(a.dataUrl));
 
-  await db.transaction("rw", db.tables, async () => {
+  await track(db.transaction("rw", db.tables, async () => {
     if (mode === "replace") {
       for (const t of db.tables) if (t.name !== "settings") await t.clear();
       await db.assets.bulkAdd([...assetBlobs.entries()].map(([id, blob]) => ({ id, blob, created_at: Date.now() })));
@@ -472,7 +496,7 @@ export async function importBackup(p: ParsedBackup, mode: "merge" | "replace"): 
       delete nh.id;
       await db.scan_history.add(nh);
     }
-  });
+  }));
 }
 
 export { DEFAULT_DESIGN };

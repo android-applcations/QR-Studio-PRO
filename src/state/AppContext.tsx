@@ -1,5 +1,18 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Lang, SectionId, ThemeMode, Tx } from "../core/types";
+
+const SECTIONS: readonly string[] = ["create", "design", "scan", "library", "history", "templates"];
+
+/** Deep links / PWA shortcuts: /?section=scan opens the scanner directly. */
+function initialSection(): SectionId {
+  try {
+    const value = new URLSearchParams(window.location.search).get("section");
+    if (value && SECTIONS.includes(value)) return value as SectionId;
+  } catch {
+    /* ignore malformed URLs */
+  }
+  return "create";
+}
 import { pick } from "../core/i18n";
 import { addHistory, describeError, putSetting } from "../db/db";
 import { redactForLog } from "../core/qrTypes";
@@ -58,7 +71,7 @@ export function AppProvider({ initial, children }: { initial: Record<string, unk
   const [theme, setThemeState] = useState<ThemeMode>(["dark", "light", "system"].includes(initial.theme as string) ? (initial.theme as ThemeMode) : "dark");
   const [saveHistory, setSaveHistoryState] = useState(initial.saveHistory !== false);
   const [autoSave, setAutoSaveState] = useState(initial.autoSave === true);
-  const [section, setSection] = useState<SectionId>("create");
+  const [section, setSection] = useState<SectionId>(initialSection);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirmState, setConfirmState] = useState<Ctx["confirmState"]>(null);
@@ -119,6 +132,19 @@ export function AppProvider({ initial, children }: { initial: Record<string, unk
     setConfirmState({ ...o, resolve: (v) => { setConfirmState(null); resolve(v); } });
   }), []);
 
+  // Keep the URL in sync so deep links and PWA shortcuts stay meaningful.
+  const go = useCallback((s: SectionId) => {
+    setSection(s);
+    try {
+      const url = new URL(window.location.href);
+      if (s === "create") url.searchParams.delete("section");
+      else url.searchParams.set("section", s);
+      window.history.replaceState(window.history.state, "", url.toString());
+    } catch {
+      /* ignore browsers that block history updates */
+    }
+  }, []);
+
   const bumpData = useCallback(() => setDataVersion((v) => v + 1), []);
 
   const logActivity = useCallback<Ctx["logActivity"]>((a) => {
@@ -132,9 +158,9 @@ export function AppProvider({ initial, children }: { initial: Record<string, unk
 
   const value = useMemo<Ctx>(() => ({
     lang, dir, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, t,
-    section, go: setSection, settingsOpen, setSettingsOpen, toast, toasts, dismissToast, fail, confirm, confirmState,
+    section, go, settingsOpen, setSettingsOpen, toast, toasts, dismissToast, fail, confirm, confirmState,
     logActivity, dataVersion, bumpData,
-  }), [lang, dir, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, t, section, settingsOpen, toast, toasts, dismissToast, fail, confirm, confirmState, logActivity, dataVersion, bumpData]);
+  }), [lang, dir, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, t, section, go, settingsOpen, toast, toasts, dismissToast, fail, confirm, confirmState, logActivity, dataVersion, bumpData]);
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
