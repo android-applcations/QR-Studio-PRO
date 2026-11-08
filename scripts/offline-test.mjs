@@ -303,7 +303,21 @@ try {
 
   const caches1 = await cacheState();
   const precached = Object.values(caches1).reduce((a, b) => a + b, 0);
-  check("online: precache populated", precached >= 20, `${precached} responses in ${Object.keys(caches1).join(", ")}`);
+  // Assert on what is cached, not on a fixed count: the number changes whenever
+  // the bundler merges or splits a chunk.
+  const cachedUrls = await page.evaluate(async () => {
+    const name = (await caches.keys()).find((k) => k.includes("precache"));
+    if (!name) return [];
+    const cache = await caches.open(name);
+    // Workbox keys revisioned entries with a `?__WB_REVISION__=` search param.
+    return (await cache.keys()).map((r) => r.url.split("?")[0]);
+  });
+  const has = (re) => cachedUrls.some((u) => re.test(u));
+  check(
+    "online: precache holds the whole app shell (html, js, css, icons)",
+    has(/\/index\.html$/) && has(/\/assets\/.*\.js$/) && has(/\/assets\/.*\.css$/) && has(/\/icons\//),
+    `${precached} responses, shell=${has(/\/index\.html$/)} js=${has(/\/assets\/.*\.js$/)} css=${has(/\/assets\/.*\.css$/)} icons=${has(/\/icons\//)}`,
+  );
 
   // ---- create + save a QR code
   await hasSel('input[aria-label="Search"]');

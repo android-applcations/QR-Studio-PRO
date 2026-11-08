@@ -26,6 +26,15 @@ interface PwaCtx {
   state: ConnectionState;
   /** a service worker is installed and every asset is precached */
   offlineReady: boolean;
+  /** verified count of the files the app needs offline (null while unknown) */
+  offlineFiles: { total: number; missing: number } | null;
+  /** the browser promised never to evict our cache / database (null = unknown) */
+  storagePersistent: boolean | null;
+  /** verify the offline cache and re-download whatever the browser evicted */
+  ensureOffline: () => Promise<void>;
+  /** ask the browser for durable (never-evicted) storage */
+  requestPersistence: () => Promise<boolean>;
+  repairing: boolean;
   /** a new version has been downloaded and is waiting */
   needRefresh: boolean;
   swSupported: boolean;
@@ -90,6 +99,15 @@ const isIos = () =>
   (/iphone|ipad|ipod/i.test(navigator.userAgent) ||
     (navigator.platform === "MacIntel" && (navigator as Navigator).maxTouchPoints > 1));
 
+/** Mirrors `OfflineStatus` in `src/sw.ts`. Declared locally so the app bundle
+ *  never has to import the service worker (and with it Workbox). */
+interface OfflineStatus {
+  total: number;
+  missing: number;
+  repaired: number;
+  broken: number;
+}
+
 export function PwaProvider({ children }: { children: ReactNode }) {
   const swSupported = typeof navigator !== "undefined" && "serviceWorker" in navigator;
   const [online, setOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
@@ -97,6 +115,9 @@ export function PwaProvider({ children }: { children: ReactNode }) {
   const [canInstall, setCanInstall] = useState(false);
   const [installed, setInstalled] = useState(standaloneQuery);
   const [offlineReadyDismissed, setOfflineReadyDismissed] = useState(false);
+  const [offlineFiles, setOfflineFiles] = useState<{ total: number; missing: number } | null>(null);
+  const [storagePersistent, setStoragePersistent] = useState<boolean | null>(null);
+  const [repairing, setRepairing] = useState(false);
   const deferred = useRef<BeforeInstallPromptEvent | null>(null);
   const registration = useRef<ServiceWorkerRegistration | null>(null);
 
@@ -227,6 +248,91 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     }
   }, [swSupported]);
 
+  /**
+   * Ask the browser to make our storage durable.
+   *
+   * Without it the browser may throw away the offline cache (and the IndexedDB
+   * database) whenever the device is short on space — which is exactly how an
+   * app that worked offline yesterday stops working today.
+   */
+  const requestPersistence = useCallback(async (): Promise<boolean> => {
+    try {
+      const store = navigator.storage;
+      if (!store?.persist) {
+        setStoragePersistent(false);
+        return false;
+      }
+      if (await store.persisted()) {
+        setStoragePersistent(true);
+        return true;
+      }
+      const granted = await store.persist();
+      setStoragePersistent(granted);
+      return granted;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  /**
+   * Verify every precached file and re-download the ones that went missing.
+   * Runs on start-up and whenever the connection comes back, so a cache the
+   * browser evicted — or a first visit that was interrupted — repairs itself.
+   */
+  const ensureOffline = useCallback(async (): Promise<void> => {
+    void requestPersistence();
+    const sw = navigator.serviceWorker?.controller;
+    if (!sw) return;
+    setRepairing(true);
+    try {
+      const status = await new Promise<OfflineStatus | null>((resolve) => {
+        const channel = new MessageChannel();
+        const timer = window.setTimeout(() => resolve(null), 20000);
+        channel.port1.onmessage = (event: MessageEvent) => {
+          window.clearTimeout(timer);
+          const data = event.data as { status?: OfflineStatus } | null;
+          resolve(data?.status ?? null);
+        };
+        try {
+          sw.postMessage({ type: "ENSURE_OFFLINE" }, [channel.port2]);
+        } catch {
+          window.clearTimeout(timer);
+          resolve(null);
+        }
+      });
+      if (status) setOfflineFiles({ total: status.total, missing: status.broken });
+    } catch {
+      /* the worker is busy or gone — the next visit tries again */
+    } finally {
+      setRepairing(false);
+    }
+  }, [requestPersistence]);
+
+  // Ask for durable storage as early as we can.
+  useEffect(() => {
+    void requestPersistence();
+  }, [requestPersistence]);
+
+  // Verify (and silently repair) the offline cache on start-up and every time we
+  // come back online.
+  useEffect(() => {
+    if (!swSupported || !online || !swActive) return;
+    const timer = window.setTimeout(() => void ensureOffline(), 1500);
+    return () => window.clearTimeout(timer);
+  }, [swSupported, online, swActive, ensureOffline]);
+
+  // The worker also pushes a status on its own (right after it activates).
+  useEffect(() => {
+    if (!swSupported) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; status?: OfflineStatus } | null;
+      if (data?.type !== "OFFLINE_STATUS" || !data.status) return;
+      setOfflineFiles({ total: data.status.total, missing: data.status.broken });
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, [swSupported]);
+
   const hideOfflineReady = useCallback(() => {
     setOfflineReadyDismissed(true);
     setOfflineReady(false);
@@ -250,6 +356,11 @@ export function PwaProvider({ children }: { children: ReactNode }) {
       online,
       state,
       offlineReady: offlineReady && !offlineReadyDismissed,
+      offlineFiles,
+      storagePersistent,
+      ensureOffline,
+      requestPersistence,
+      repairing,
       needRefresh,
       swSupported,
       swActive,
@@ -266,6 +377,11 @@ export function PwaProvider({ children }: { children: ReactNode }) {
       state,
       offlineReady,
       offlineReadyDismissed,
+      offlineFiles,
+      storagePersistent,
+      ensureOffline,
+      requestPersistence,
+      repairing,
       needRefresh,
       swSupported,
       swActive,

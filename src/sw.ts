@@ -5,14 +5,21 @@
  *
  * This is the ONLY service worker of the app. It is written here and compiled by
  * Vite (vite-plugin-pwa `injectManifest` strategy); Workbox injects the precache
- * manifest (`self.__WB_MANIFEST`) into the compiled output at build time.
+ * manifest (`__WB_MANIFEST`) into the compiled output at build time.
  *
  * Data safety: this worker never touches IndexedDB. Activating a new version only
  * replaces caches — the Dexie database `qr_studio_pro` is left untouched.
  */
 
-import { clientsClaim } from "workbox-core";
-import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from "workbox-precaching";
+import { cacheNames, clientsClaim } from "workbox-core";
+import {
+  addRoute,
+  cleanupOutdatedCaches,
+  createHandlerBoundToURL,
+  getCacheKeyForURL,
+  matchPrecache,
+  precache,
+} from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import { StaleWhileRevalidate } from "workbox-strategies";
 import { ExpirationPlugin } from "workbox-expiration";
@@ -26,26 +33,38 @@ const OFFLINE_URL = "offline.html";
 const RUNTIME_CACHE = "qr-studio-runtime";
 
 /**
- * Precache everything emitted in `dist`: the HTML shell, all JS/CSS — including
- * every React.lazy chunk — plus icons and the offline fallback page.
+ * Workbox injects the precache manifest by string-replacing the well-known
+ * manifest token, so that exact token may appear only once in this file.
+ * It is captured here and reused everywhere else.
  */
-precacheAndRoute(self.__WB_MANIFEST);
+const WB_MANIFEST = self.__WB_MANIFEST;
+
+// ---------------------------------------------------------------------------
+// 1. The precache list and its install/activate listeners come first.
+//
+// `createHandlerBoundToURL()` validates at *creation* time that the URL is in
+// the list, so the list has to exist before the navigation handler is built.
+//
+// `precache()` (not `precacheAndRoute()`) is used on purpose: it registers the
+// list and the lifecycle listeners but NOT the route, so we can decide exactly
+// where that route goes — see step 3.
+// ---------------------------------------------------------------------------
+precache(WB_MANIFEST);
 
 /** Remove caches from older Workbox generations. IndexedDB is never touched. */
 cleanupOutdatedCaches();
 
 // ---------------------------------------------------------------------------
-// Updates are explicit (registerType: "prompt"): a new worker waits until the
-// user presses "Update now", so an in-flight save can never be interrupted.
-// ---------------------------------------------------------------------------
-self.addEventListener("message", (event: ExtendableMessageEvent) => {
-  const data = event.data as { type?: string } | null;
-  if (data?.type === "SKIP_WAITING") void self.skipWaiting();
-});
-
-// ---------------------------------------------------------------------------
-// Navigations: the app shell comes from the precache, so every screen —
-// including the lazily imported ones — works with no network at all.
+// 2. Navigations, registered BEFORE the precache route.
+//
+// The app shell comes from the precache, so the whole app works with no network
+// at all. Order matters: Workbox's precache route answers `/` from the precache
+// but falls back to the network on a cache miss, and a route match stops the
+// router from ever trying a later route. If the browser wipes the cache (it does
+// that when the device is short on storage) that network fallback throws and the
+// user ends up on the browser's "no internet" error page instead of ours. With
+// navigations handled first, a miss falls through to `offline.html` and then to
+// a self-contained inline page.
 // ---------------------------------------------------------------------------
 const serveShell = createHandlerBoundToURL("index.html");
 const serveOfflinePage = createHandlerBoundToURL(OFFLINE_URL);
@@ -80,6 +99,96 @@ registerRoute(
 );
 
 // ---------------------------------------------------------------------------
+// 3. Route for the precached static assets, registered last (see step 2).
+// ---------------------------------------------------------------------------
+addRoute();
+
+// ---------------------------------------------------------------------------
+// Self-healing precache.
+//
+// Browsers evict a site's storage when the device runs low on space (iOS Safari
+// does it aggressively, and it is not limited to installed apps). When that
+// happens offline quietly breaks: the shell still loads but parts of the app
+// die. So instead of trusting the cache once and forever, the worker *verifies*
+// every precached file on activation and whenever the app asks it to, and
+// re-downloads whatever went missing. The app uses the report to tell the user
+// the truth instead of claiming everything is fine.
+// ---------------------------------------------------------------------------
+export interface OfflineStatus {
+  /** files the build declared */
+  total: number;
+  /** files that were NOT in the cache when we looked */
+  missing: number;
+  /** files we managed to re-download just now */
+  repaired: number;
+  /** still missing after the repair attempt (almost always "we are offline") */
+  broken: number;
+}
+
+const manifestURLs = (): string[] =>
+  (WB_MANIFEST ?? []).map((entry) => (typeof entry === "string" ? entry : entry.url));
+
+async function ensureOfflineAssets(): Promise<OfflineStatus> {
+  const urls = manifestURLs();
+  let missing = 0;
+  let repaired = 0;
+
+  for (const url of urls) {
+    let present = false;
+    try {
+      present = (await matchPrecache(url)) !== undefined;
+    } catch {
+      present = false;
+    }
+    if (present) continue;
+
+    missing++;
+    try {
+      const cacheKey = getCacheKeyForURL(url);
+      if (!cacheKey) continue;
+      const response = await fetch(new Request(url, { cache: "reload", credentials: "same-origin" }));
+      if (!response.ok) continue;
+      const cache = await caches.open(cacheNames.precache);
+      await cache.put(cacheKey, response);
+      repaired++;
+    } catch {
+      // Offline (or the file is gone): it will be picked up on the next visit.
+    }
+  }
+
+  return { total: urls.length, missing, repaired, broken: missing - repaired };
+}
+
+async function reportOfflineStatus(): Promise<OfflineStatus> {
+  const status = await ensureOfflineAssets();
+  try {
+    const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of clients) client.postMessage({ type: "OFFLINE_STATUS", status });
+  } catch {
+    /* nothing to report to */
+  }
+  return status;
+}
+
+// ---------------------------------------------------------------------------
+// Updates are explicit (registerType: "prompt"): a new worker waits until the
+// user presses "Update now", so an in-flight save can never be interrupted.
+// `ENSURE_OFFLINE` lets the page ask for a verification + repair run.
+// ---------------------------------------------------------------------------
+self.addEventListener("message", (event: ExtendableMessageEvent) => {
+  const data = event.data as { type?: string } | null;
+  if (data?.type === "SKIP_WAITING") void self.skipWaiting();
+  if (data?.type === "ENSURE_OFFLINE") {
+    const reply = event.ports?.[0];
+    event.waitUntil(
+      ensureOfflineAssets().then((status) => {
+        reply?.postMessage({ type: "OFFLINE_STATUS", status });
+      }),
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Safety net for same-origin static assets that are not part of the precache.
 // ---------------------------------------------------------------------------
 registerRoute(
@@ -99,7 +208,15 @@ registerRoute(
 // Lifecycle: take control of clients as soon as this worker is the active one.
 // ---------------------------------------------------------------------------
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      // Take control of the very first page immediately, so a first-time visitor
+      // is already protected before they navigate anywhere.
+      await self.clients.claim();
+      // Top up anything the browser evicted, then tell the app how it went.
+      await reportOfflineStatus();
+    })(),
+  );
 });
 
 clientsClaim();
