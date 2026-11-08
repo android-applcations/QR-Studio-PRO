@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Camera, CameraOff, Check, Clipboard, ExternalLink, Eye, EyeOff, ImageUp, Pause, Play, RefreshCw, Save, Share2, ShieldAlert, Sparkles, Wifi, Zap, ZapOff } from "lucide-react";
 import { detectType, TYPE_BY_ID } from "../core/qrTypes";
 import { analyzeLink } from "../core/security";
-import { openExternal, openInAppOrBrowser, watchHandoff } from "../core/openExternal";
+import { openExternal, openInAppOrBrowser } from "../core/openExternal";
 import { describeScan, hasSecretField } from "../core/scanView";
 import { T } from "../core/i18n";
 import { addHistory } from "../db/db";
@@ -65,21 +65,9 @@ function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void 
       return;
     }
 
-    // A deep link (instagram://…, whatsapp://…) is simply dropped when no app on
-    // the device answers it. If the user is still here after a moment, say so
-    // and put the link in their clipboard instead of leaving them waiting.
-    if (link.kind === "app") {
-      watchHandoff(2500, () => {
-        void copyText(link.href).catch(() => {});
-        toast(
-          t([
-            "No app on this device answered this link — it was copied instead.",
-            "لا يوجد تطبيق على هذا الجهاز يستقبل هذا الرابط — تم نسخه بدلاً من ذلك.",
-          ]),
-          "info",
-        );
-      });
-    }
+    // Nothing else to say: the link is on its way to the app that owns it, or to
+    // the browser when there is none. Staying silent here is the point — a
+    // "no app can open this" toast only made the hand-off look like a failure.
   };
   /**
    * Wi-Fi only. Joining a network is not something a web page is allowed to do,

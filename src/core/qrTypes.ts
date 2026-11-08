@@ -479,6 +479,62 @@ const upi = def(
   },
 );
 
+/**
+ * Sham Cash (شام كاش) — the Syrian e-wallet run by Cham Bank, used across Syria
+ * for salaries, bills and shop payments.
+ *
+ * Money moves to a wallet through the code the app shows under "Receive": either
+ * the 32-character wallet code or the 16-digit account number. That code is all
+ * the QR may hold — Sham Cash's scanner reads the address and nothing else, so
+ * the name, amount and note are carried on the printed sheet instead of being
+ * packed into the code, where they would make it unreadable.
+ */
+const SHAMCASH_KINDS = {
+  wallet: { re: /^[A-Za-z0-9]{32}$/, err: ["The wallet code is 32 letters and digits", "رمز المحفظة 32 حرفاً ورقماً"] as Tx },
+  account: { re: /^\d{16}$/, err: ["The account number is 16 digits", "رقم الحساب 16 رقماً"] as Tx },
+};
+const shamcash = def(
+  "shamcash", "payment", ["Sham Cash", "شام كاش"], ["Receive on a Syrian wallet", "استلام على محفظة سورية"], "shamcash",
+  [
+    f("kind", "select", ["Identify by", "التعريف بواسطة"], {
+      defaultValue: "wallet",
+      options: [
+        { value: "wallet", label: ["Wallet code", "رمز المحفظة"] },
+        { value: "account", label: ["Account number", "رقم الحساب"] },
+      ],
+    }),
+    f("code", "text", ["Wallet code or account number", "رمز المحفظة أو رقم الحساب"], {
+      required: true,
+      dir: "ltr",
+      maxLength: 32,
+      placeholder: "32 letters and digits, or 16 digits",
+      hint: ["Open Sham Cash → Receive, then copy your wallet code (32 letters and digits) or account number (16 digits).", "افتح شام كاش ← استقبال، ثم انسخ رمز المحفظة (32 حرفاً ورقماً) أو رقم الحساب (16 رقماً)."],
+    }),
+    f("name", "text", ["Account name", "اسم الحساب"], { required: true, maxLength: 70 }),
+    f("phone", "tel", ["Phone (optional)", "الهاتف (اختياري)"], { half: true, dir: "ltr", maxLength: 24 }),
+    f("amount", "number", ["Amount (optional)", "المبلغ (اختياري)"], { half: true, dir: "ltr" }),
+    f("currency", "select", ["Currency", "العملة"], {
+      half: true,
+      defaultValue: "SYP",
+      options: [
+        { value: "SYP", label: ["Syrian pound", "ليرة سورية"] },
+        { value: "USD", label: ["US dollar", "دولار أمريكي"] },
+        { value: "TRY", label: ["Turkish lira", "ليرة تركية"] },
+      ],
+    }),
+    f("note", "text", ["Note (optional)", "ملاحظة (اختياري)"], { maxLength: 80 }),
+  ],
+  // Only the address: anything else and Sham Cash cannot read the code.
+  (v) => trim(v, "code").replace(/\s+/g, ""),
+  (v, errs) => {
+    const kind = (trim(v, "kind") || "wallet") as keyof typeof SHAMCASH_KINDS;
+    const spec = SHAMCASH_KINDS[kind] ?? SHAMCASH_KINDS.wallet;
+    const code = trim(v, "code").replace(/\s+/g, "");
+    if (code && !spec.re.test(code)) errs.code = spec.err;
+    if (trim(v, "amount") && Number(trim(v, "amount")) <= 0) errs.amount = E.number;
+  },
+);
+
 // ---------- Media ----------
 function hostType(id: string, icon: string, title: Tx, desc: Tx, hosts: RegExp, placeholder: string): QrTypeDef {
   return def(
@@ -525,7 +581,7 @@ export const QR_TYPES: QrTypeDef[] = [
   phone, sms, email,
   wifi,
   contact, text, multitext,
-  paypal, crypto, epc, upi,
+  paypal, crypto, epc, upi, shamcash,
   spotify, soundcloud, vimeo, fileLink,
   raw,
 ];
@@ -556,6 +612,31 @@ export function typesOfCategory(c: QrCategoryId): QrTypeDef[] {
 
 export function visibleFields(type: QrTypeDef, v: FormValues): FieldDef[] {
   return visible(type.fields, v);
+}
+
+export interface DetailRow {
+  label: Tx;
+  /** the text as typed (or the raw option value) */
+  value: string;
+  /** for selects: the option's own label, ready for translation */
+  valueTx?: Tx;
+}
+
+/**
+ * Everything the user filled in, in form order — the sheet that travels with a
+ * printed code. It carries the details a code itself cannot hold (Sham Cash's
+ * QR, for instance, may only be the wallet address, so the name and amount live
+ * here instead).
+ */
+export function detailRows(type: QrTypeDef, v: FormValues): DetailRow[] {
+  const rows: DetailRow[] = [];
+  for (const fd of visibleFields(type, v)) {
+    const raw = (v[fd.key] ?? "").trim();
+    if (!raw) continue;
+    const opt = fd.options?.find((o) => o.value === raw);
+    rows.push(opt ? { label: fd.label, value: raw, valueTx: opt.label } : { label: fd.label, value: raw });
+  }
+  return rows;
 }
 
 export function defaultValues(type: QrTypeDef): FormValues {

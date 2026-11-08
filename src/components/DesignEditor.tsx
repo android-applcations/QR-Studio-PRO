@@ -12,6 +12,7 @@ import { QrImage, ReadabilityPanel, useReadability } from "./QrView";
 import { Button, ColorField, Field, IconBtn, inputCls, Modal, Segmented, Slider, Toggle } from "./ui";
 import { ExportSheet } from "./ExportSheet";
 import { PrintSheet } from "./PrintSheet";
+import { detailRows } from "../core/qrTypes";
 
 type Tab = "colors" | "shapes" | "logo" | "frame" | "tech";
 
@@ -67,6 +68,16 @@ export default function DesignEditor() {
   const [tplOpen, setTplOpen] = useState(false);
   const [tplName, setTplName] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // The details that travel with the code on the printed sheet.
+  const sheetDetails = useMemo(
+    () =>
+      detailRows(type, project.values).map((r) => ({
+        label: t(r.label),
+        value: r.valueTx ? t(r.valueTx) : r.value,
+      })),
+    [type, project.values, t],
+  );
 
   const isSample = !build.valid;
   const content = build.valid ? build.content : SAMPLE;
@@ -278,7 +289,11 @@ export default function DesignEditor() {
       </div>
 
       <ExportSheet open={showExport} onClose={() => setShowExport(false)} items={[exportItem]} onPrint={() => { setShowExport(false); setShowPrint(true); }} />
-      <PrintSheet open={showPrint} onClose={() => setShowPrint(false)} items={[{ content, design: d, logoHref, label: exportItem.name }]} />
+      <PrintSheet
+        open={showPrint}
+        onClose={() => setShowPrint(false)}
+        items={[{ content, design: d, logoHref, label: exportItem.name, details: sheetDetails }]}
+      />
       <Modal open={tplOpen} onClose={() => setTplOpen(false)} title={t(["Save as template", "حفظ كقالب"])} footer={<><Button variant="ghost" onClick={() => setTplOpen(false)}>{t(T.cancel)}</Button><Button variant="primary" disabled={!tplName.trim()} onClick={saveTemplate}>{t(T.save)}</Button></>}>
         <Field label={t(["Template name", "اسم القالب"])}>
           <input autoFocus className={inputCls()} value={tplName} onChange={(e) => setTplName(e.target.value)} maxLength={60} onKeyDown={(e) => { if (e.key === "Enter") void saveTemplate(); }} />

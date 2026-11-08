@@ -1,7 +1,7 @@
 import { memo, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, Clipboard, Layers, Palette, Plus, Printer, Save, Search, Share2, Download, Sparkles } from "lucide-react";
 import type { QrCategoryId, QrTypeDef } from "../core/types";
-import { CATEGORIES, QR_TYPES, typesOfCategory } from "../core/qrTypes";
+import { CATEGORIES, detailRows, QR_TYPES, typesOfCategory } from "../core/qrTypes";
 import { T } from "../core/i18n";
 import { useApp } from "../state/AppContext";
 import { useProject } from "../state/ProjectContext";
@@ -242,6 +242,17 @@ function ResultStep() {
     }
   };
 
+  // What the code itself cannot carry (a Sham Cash QR may only hold the wallet
+  // address), printed as a small table under the code.
+  const sheetDetails = useMemo(
+    () =>
+      detailRows(type, project.values).map((r) => ({
+        label: t(r.label),
+        value: r.valueTx ? t(r.valueTx) : r.value,
+      })),
+    [type, project.values, t],
+  );
+
   const quickPng = async () => {
     try {
       const blob = await renderToBlob(build.content, project.design, logoHref, { format: "png", size: 1024, transparent: false, quality: 0.92, includeFrame: true, includeLogo: true, filename: "", paper: "a4", printMm: 60 });
@@ -291,7 +302,11 @@ function ResultStep() {
         </div>
       </div>
       <ExportSheet open={showExport} onClose={() => setShowExport(false)} items={[item]} onPrint={() => { setShowExport(false); setShowPrint(true); }} />
-      <PrintSheet open={showPrint} onClose={() => setShowPrint(false)} items={[{ content: build.content, design: project.design, logoHref, label: item.name }]} />
+      <PrintSheet
+        open={showPrint}
+        onClose={() => setShowPrint(false)}
+        items={[{ content: build.content, design: project.design, logoHref, label: item.name, details: sheetDetails }]}
+      />
     </div>
   );
 }

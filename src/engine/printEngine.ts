@@ -7,6 +7,8 @@ export interface PrintItem {
   design: DesignConfig;
   logoHref: string | null;
   label: string;
+  /** the details that travel with the code, printed underneath it */
+  details?: { label: string; value: string }[];
 }
 
 export interface PrintOptions {
@@ -31,10 +33,15 @@ export async function buildPrintHtml(items: PrintItem[], o: PrintOptions): Promi
     imgs.push(await blobToDataUrl(await canvasToBlob(canvas, "image/png")));
   }
   const cells = items
-    .map(
-      (it, i) =>
-        `<figure><img src="${imgs[i]}" alt="QR">${o.labels ? `<figcaption>${esc(it.label)}</figcaption>` : ""}</figure>`,
-    )
+    .map((it, i) => {
+      const caption = o.labels ? `<figcaption>${esc(it.label)}</figcaption>` : "";
+      const rows = (it.details ?? [])
+        .filter((d) => d.value)
+        .map((d) => `<div class="row"><span class="k">${esc(d.label)}</span><span class="v">${esc(d.value)}</span></div>`)
+        .join("");
+      const meta = o.labels && rows ? `<dl class="meta">${rows}</dl>` : "";
+      return `<figure><img src="${imgs[i]}" alt="QR">${caption}${meta}</figure>`;
+    })
     .join("");
   const page = o.paper === "letter" ? "letter" : o.paper.toUpperCase();
   return `<!doctype html><html dir="${o.dir}"><head><meta charset="utf-8"><title>${esc(o.title)}</title><style>
@@ -46,6 +53,10 @@ html,body{margin:0;padding:0;background:#fff;color:#000;font-family:system-ui,'S
 figure{margin:0;width:${o.sizeMm}mm;break-inside:avoid;page-break-inside:avoid;text-align:center}
 img{width:${o.sizeMm}mm;height:auto;display:block;image-rendering:crisp-edges}
 figcaption{font-size:9pt;margin-top:1.5mm;word-break:break-word}
+.meta{margin:1.5mm 0 0;text-align:start;border-top:.2mm solid #bbb;padding-top:1.2mm}
+.meta .row{display:flex;gap:2mm;justify-content:space-between;font-size:7.5pt;line-height:1.35;padding:.35mm 0}
+.meta .k{color:#555;white-space:nowrap}
+.meta .v{font-weight:600;text-align:end;word-break:break-word}
 </style></head><body><div class="sheet">${cells}</div></body></html>`;
 }
 

@@ -15,7 +15,9 @@
     "test:layout": "node scripts/mobile-layout-test.mjs",
     "test:resilience": "node scripts/offline-resilience-test.mjs",
     "test:links": "node scripts/external-link-test.mjs",
-    "test:scan": "node scripts/scan-result-test.mjs"
+    "test:scan": "node scripts/scan-result-test.mjs",
+    "test:update": "node scripts/update-badge-test.mjs",
+    "test:payment": "node scripts/payment-test.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",

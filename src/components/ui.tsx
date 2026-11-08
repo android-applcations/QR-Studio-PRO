@@ -50,6 +50,29 @@ export function Button({ variant = "soft", size = "md", icon, full, className, c
   );
 }
 
+/**
+ * The red "Update" pill.
+ *
+ * It only ever appears when a new version has actually finished downloading and
+ * is waiting to take over — a service worker found an update on the server, not
+ * a guess about how long the app has been open. Render it next to whatever
+ * opens the update action so the same signal follows the user there.
+ */
+export function UpdateBadge({ className }: { className?: string }) {
+  const { t } = useApp();
+  return (
+    <span
+      dir="rtl"
+      className={cn(
+        "anim-pop inline-flex select-none items-center rounded-full bg-bad px-1.5 py-[1px] text-[10px] font-extrabold leading-[14px] text-white shadow-[0_2px_10px_-2px_var(--c-bad)]",
+        className,
+      )}
+    >
+      {t(T.updateBadge)}
+    </span>
+  );
+}
+
 export function IconBtn({ label, className, children, active, onClick, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean }) {
   const handleClick = useCallback(
     (e: MouseEvent<HTMLButtonElement>) => {
