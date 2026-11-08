@@ -61,6 +61,16 @@ const L = {
   iban: ["IBAN", "رقم الآيبان"],
   content: ["Content", "المحتوى"],
   uri: ["Link / URI", "الرابط / URI"],
+  platform: ["Platform", "المنصة"],
+  username: ["Username", "اسم المستخدم"],
+  page: ["Page", "الصفحة"],
+  post: ["Post", "المنشور"],
+  video: ["Video", "الفيديو"],
+  channel: ["Channel", "القناة"],
+  invite: ["Invite code", "رمز الدعوة"],
+  walletCode: ["Wallet code", "رمز المحفظة"],
+  accountNumber: ["Account number", "رقم الحساب"],
+  identifier: ["Identifier", "المعرّف"],
 } satisfies Record<string, Tx>;
 
 const SECURITY: Record<string, Tx> = {
@@ -262,6 +272,164 @@ function epcFields(content: string): ScanField[] {
  * Describe scanned content as an ordered list of fields.
  * Always returns at least one row, so the result view never looks empty.
  */
+const firstSeg = (u: URL, i = 0) => u.pathname.split("/").filter(Boolean)[i] ?? "";
+const decodeSeg = (v: string) => {
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return v;
+  }
+};
+
+interface PlatformView {
+  host: RegExp;
+  name: Tx;
+  /** the one thing on the page a person recognises, if there is one */
+  pick?: (u: URL) => { label: Tx; value: string } | null;
+}
+
+/**
+ * What a link actually is.
+ *
+ * Every scanned link used to become a single "Link / URI" row with the raw URL,
+ * which is why a code that holds nothing but an address (Sham Cash) told you
+ * nothing, and why a profile link looked like gibberish. Now the panel says what
+ * you are looking at first, then the part of it that identifies someone, then
+ * the link itself — the same three rows, in the same order, everywhere.
+ */
+const PLATFORMS: PlatformView[] = [
+  {
+    host: /(^|\.)(twitter|x)\.com$/i,
+    name: ["X (Twitter)", "إكس (تويتر)"],
+    pick: (u) => {
+      const parts = u.pathname.split("/").filter(Boolean);
+      const i = parts.indexOf("status");
+      if (i >= 0 && parts[i + 1]) return { label: L.post, value: parts[i + 1] };
+      if (parts[0] && !["home", "explore", "search", "i", "settings", "messages", "notifications"].includes(parts[0].toLowerCase()))
+        return { label: L.username, value: "@" + parts[0] };
+      return null;
+    },
+  },
+  {
+    host: /(^|\.)instagram\.com$/i,
+    name: ["Instagram", "إنستغرام"],
+    pick: (u) => {
+      const first = firstSeg(u);
+      if (!first || ["p", "reel", "reels", "stories", "explore", "accounts", "tv"].includes(first.toLowerCase())) return null;
+      return { label: L.username, value: "@" + first };
+    },
+  },
+  {
+    host: /(^|\.)tiktok\.com$/i,
+    name: ["TikTok", "تيك توك"],
+    pick: (u) => (firstSeg(u).startsWith("@") ? { label: L.username, value: firstSeg(u) } : null),
+  },
+  {
+    host: /(^|\.)facebook\.com$/i,
+    name: ["Facebook", "فيسبوك"],
+    pick: (u) => (firstSeg(u) ? { label: L.page, value: firstSeg(u) } : null),
+  },
+  {
+    host: /(^|\.)snapchat\.com$/i,
+    name: ["Snapchat", "سناب شات"],
+    pick: (u) => {
+      const parts = u.pathname.split("/").filter(Boolean);
+      const i = parts.indexOf("add");
+      return i >= 0 && parts[i + 1] ? { label: L.username, value: "@" + parts[i + 1] } : null;
+    },
+  },
+  {
+    host: /(^|\.)(t|telegram)\.me$/i,
+    name: ["Telegram", "تيليجرام"],
+    pick: (u) => {
+      const first = firstSeg(u);
+      if (!first) return null;
+      if (first.toLowerCase() === "joinchat") return { label: L.invite, value: decodeSeg(firstSeg(u, 1)) };
+      return { label: L.username, value: "@" + first };
+    },
+  },
+  {
+    host: /(^|\.)(youtube\.com|youtu\.be)$/i,
+    name: ["YouTube", "يوتيوب"],
+    pick: (u) => {
+      const id = u.searchParams.get("v") ?? (u.hostname.endsWith("youtu.be") ? firstSeg(u) : u.pathname.startsWith("/shorts/") ? firstSeg(u, 1) : "");
+      if (id) return { label: L.video, value: id };
+      const handle = firstSeg(u);
+      return handle.startsWith("@") ? { label: L.channel, value: handle } : null;
+    },
+  },
+  {
+    host: /(^|\.)linkedin\.com$/i,
+    name: ["LinkedIn", "لينكدإن"],
+    pick: (u) => {
+      const parts = u.pathname.split("/").filter(Boolean);
+      const i = parts.findIndex((p) => p === "in" || p === "company");
+      const slug = i >= 0 ? parts[i + 1] : parts[0];
+      return slug ? { label: L.username, value: decodeSeg(slug) } : null;
+    },
+  },
+  {
+    host: /(^|\.)pinterest\.com$/i,
+    name: ["Pinterest", "بنترست"],
+    pick: (u) => (firstSeg(u) ? { label: L.username, value: "@" + firstSeg(u) } : null),
+  },
+  {
+    host: /(^|\.)threads\.net$/i,
+    name: ["Threads", "ثريدز"],
+    pick: (u) => (firstSeg(u) ? { label: L.username, value: "@" + firstSeg(u).replace(/^@/, "") } : null),
+  },
+  {
+    host: /(^|\.)discord\.(gg|com)$/i,
+    name: ["Discord", "ديسكورد"],
+    pick: (u) => (firstSeg(u) ? { label: L.invite, value: firstSeg(u) } : null),
+  },
+  {
+    host: /(^|\.)(wa\.me|whatsapp\.com|api\.whatsapp\.com)$/i,
+    name: ["WhatsApp", "واتساب"],
+    pick: (u) => {
+      const phone = (u.searchParams.get("phone") ?? "").replace(/\D/g, "") || (u.hostname === "wa.me" ? firstSeg(u).replace(/\D/g, "") : "");
+      return phone ? { label: L.number, value: "+" + phone } : null;
+    },
+  },
+  { host: /(^|\.)open\.spotify\.com$/i, name: ["Spotify", "سبوتيفاي"] },
+  { host: /(^|\.)soundcloud\.com$/i, name: ["SoundCloud", "ساوند كلاود"] },
+  { host: /(^|\.)vimeo\.com$/i, name: ["Vimeo", "فيميو"] },
+  { host: /(^|\.)paypal\.(com|me)$/i, name: ["PayPal", "باي بال"] },
+];
+
+const SHAMCASH_CODE = /^[A-Za-z0-9]{32}$/;
+
+/** Rows for a Sham Cash code: the address is the whole payload. */
+function shamcashFields(s: string): ScanField[] {
+  const code = s.trim();
+  const fields: ScanField[] = [{ label: L.platform, valueTx: ["Sham Cash", "شام كاش"] }];
+  if (SHAMCASH_CODE.test(code)) fields.push({ label: L.walletCode, value: code, ltr: true });
+  else if (/^\d{16}$/.test(code)) fields.push({ label: L.accountNumber, value: code, ltr: true });
+  else fields.push({ label: L.identifier, value: code, ltr: true });
+  return fields;
+}
+
+/** Rows for anything that is a link: what it is, who it points at, the link. */
+function linkFields(s: string): ScanField[] {
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    return [];
+  }
+  const view = PLATFORMS.find((p) => p.host.test(u.hostname));
+  const fields: ScanField[] = [];
+  if (view) {
+    fields.push({ label: L.platform, valueTx: view.name });
+    const picked = view.pick?.(u) ?? null;
+    if (picked?.value) fields.push({ label: picked.label, value: picked.value, ltr: true });
+  } else {
+    fields.push({ label: L.platform, value: u.hostname.replace(/^www\./i, ""), ltr: true });
+  }
+  fields.push({ label: L.link, value: s, ltr: true, multiline: true });
+  return fields;
+}
+
 export function describeScan(content: string, typeId: string): ScanField[] {
   const s = (content ?? "").trim();
   if (!s) return [{ label: L.content, value: "", multiline: true }];
@@ -300,12 +468,19 @@ export function describeScan(content: string, typeId: string): ScanField[] {
       case "epc":
         fields = epcFields(s);
         break;
+      case "shamcash":
+        fields = shamcashFields(s);
+        break;
       default:
         fields = [];
     }
   } catch {
     fields = [];
   }
+
+  // A link is the one kind of content with something to say about itself, so it
+  // gets real rows instead of the raw string.
+  if (!fields.length && /^https?:\/\//i.test(s)) fields = linkFields(s);
 
   // Nothing parsed (or the type has no structure): show it as content, so the
   // layout is identical for every type.

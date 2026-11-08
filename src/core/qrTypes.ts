@@ -7,7 +7,7 @@ const E = {
   httpsOnly: ["Only http/https links are allowed", "يُسمح بروابط http/https فقط"] as Tx,
   phone: ["Enter a valid phone number (with country code)", "أدخل رقم هاتف صحيحاً (مع رمز الدولة)"] as Tx,
   email: ["Enter a valid email address", "أدخل بريداً إلكترونياً صحيحاً"] as Tx,
-  user: ["Invalid username format for this platform", "صيغة اسم المستخدم غير صحيحة لهذه المنصة"] as Tx,
+  user: ["Letters, numbers, dots and underscores only", "حروف وأرقام ونقاط وشرطة سفلية فقط"] as Tx,
   long: ["Text is too long", "النص طويل جداً"] as Tx,
   number: ["Enter a valid number", "أدخل رقماً صحيحاً"] as Tx,
   blocked: ["This link scheme is not allowed for safety", "نوع الرابط هذا غير مسموح لأسباب أمنية"] as Tx,
@@ -126,29 +126,46 @@ interface HandleSpec {
   id: string;
   title: Tx;
   desc: Tx;
-  re: RegExp;
+  /** shortest and longest username the platform accepts */
+  min: number;
+  max: number;
   url: (h: string) => string;
   placeholder: string;
   hint: Tx;
 }
 
+/**
+ * One rule for every platform.
+ *
+ * A username is letters, numbers, dots, underscores and hyphens, within the
+ * platform's length. There used to be a different character set per platform —
+ * Telegram refused dots, X refused them too, Discord refused underscores — and
+ * every one of those rules rejected names the platform happily accepts, because
+ * a rule like that goes stale the moment a platform changes its mind. The code
+ * only has to produce a link that opens, so accept anything reasonable and let
+ * the platform itself judge the name.
+ */
+const HANDLE_OK = /^[A-Za-z0-9._-]+$/;
+
 const HANDLE_PLATFORMS: HandleSpec[] = [
-  { id: "instagram", title: ["Instagram", "إنستغرام"], desc: ["Open your profile", "افتح حسابك الشخصي"], re: /^[A-Za-z0-9._]{1,30}$/, url: (h) => `https://www.instagram.com/${h}/`, placeholder: "username", hint: ["Letters, numbers, dots and underscores", "حروف وأرقام ونقاط وشرطة سفلية"] },
-  { id: "facebook", title: ["Facebook", "فيسبوك"], desc: ["Page or profile", "صفحة أو حساب"], re: /^[A-Za-z0-9.\-]{5,50}$/, url: (h) => `https://www.facebook.com/${h}`, placeholder: "page.name", hint: ["Page username (5+ characters) or profile link", "اسم الصفحة (5 أحرف فأكثر) أو رابط الحساب"] },
-  { id: "tiktok", title: ["TikTok", "تيك توك"], desc: ["Open your account", "افتح حسابك"], re: /^[A-Za-z0-9._]{2,24}$/, url: (h) => `https://www.tiktok.com/@${h}`, placeholder: "username", hint: ["2–24 characters", "من 2 إلى 24 حرفاً"] },
-  { id: "x", title: ["X (Twitter)", "إكس (تويتر)"], desc: ["Open your profile", "افتح حسابك"], re: /^[A-Za-z0-9_]{1,15}$/, url: (h) => `https://x.com/${h}`, placeholder: "username", hint: ["Up to 15 letters, numbers or _", "حتى 15 حرفاً أو رقماً أو _"] },
-  { id: "snapchat", title: ["Snapchat", "سناب شات"], desc: ["Add friend link", "رابط إضافة صديق"], re: /^[A-Za-z][A-Za-z0-9._-]{2,14}$/, url: (h) => `https://www.snapchat.com/add/${h}`, placeholder: "username", hint: ["3–15 characters, starts with a letter", "من 3 إلى 15 حرفاً ويبدأ بحرف"] },
-  { id: "telegram", title: ["Telegram", "تيليجرام"], desc: ["User, group or channel", "مستخدم أو مجموعة أو قناة"], re: /^[A-Za-z][A-Za-z0-9_]{4,31}$/, url: (h) => `https://t.me/${h}`, placeholder: "username", hint: ["5–32 characters", "من 5 إلى 32 حرفاً"] },
-  { id: "pinterest", title: ["Pinterest", "بنترست"], desc: ["Open your profile", "افتح حسابك"], re: /^[A-Za-z0-9_]{3,30}$/, url: (h) => `https://www.pinterest.com/${h}/`, placeholder: "username", hint: ["3–30 characters", "من 3 إلى 30 حرفاً"] },
-  { id: "threads", title: ["Threads", "ثريدز"], desc: ["Open your profile", "افتح حسابك"], re: /^[A-Za-z0-9._]{1,30}$/, url: (h) => `https://www.threads.net/@${h}`, placeholder: "username", hint: ["Same as your Instagram name", "مثل اسمك في إنستغرام"] },
-  { id: "discord", title: ["Discord", "ديسكورد"], desc: ["Server invite", "دعوة إلى خادم"], re: /^[A-Za-z0-9-]{2,32}$/, url: (h) => `https://discord.gg/${h}`, placeholder: "invite-code", hint: ["Invite code or discord.gg link", "رمز الدعوة أو رابط discord.gg"] },
+  { id: "instagram", min: 1, max: 30, title: ["Instagram", "إنستغرام"], desc: ["Open your profile", "افتح حسابك الشخصي"], url: (h) => `https://www.instagram.com/${h}/`, placeholder: "username", hint: ["Letters, numbers, dots and underscores", "حروف وأرقام ونقاط وشرطة سفلية"] },
+  { id: "facebook", min: 5, max: 50, title: ["Facebook", "فيسبوك"], desc: ["Page or profile", "صفحة أو حساب"], url: (h) => `https://www.facebook.com/${h}`, placeholder: "page.name", hint: ["Page username (5+ characters) or profile link", "اسم الصفحة (5 أحرف فأكثر) أو رابط الحساب"] },
+  { id: "tiktok", min: 2, max: 24, title: ["TikTok", "تيك توك"], desc: ["Open your account", "افتح حسابك"], url: (h) => `https://www.tiktok.com/@${h}`, placeholder: "username", hint: ["2–24 characters", "من 2 إلى 24 حرفاً"] },
+  { id: "x", min: 1, max: 15, title: ["X (Twitter)", "إكس (تويتر)"], desc: ["Open your profile", "افتح حسابك"], url: (h) => `https://x.com/${h}`, placeholder: "username", hint: ["Up to 15 letters, numbers, dots or _", "حتى 15 حرفاً أو رقماً أو نقطة أو _"] },
+  { id: "snapchat", min: 3, max: 15, title: ["Snapchat", "سناب شات"], desc: ["Add friend link", "رابط إضافة صديق"], url: (h) => `https://www.snapchat.com/add/${h}`, placeholder: "username", hint: ["3–15 characters", "من 3 إلى 15 حرفاً"] },
+  { id: "telegram", min: 5, max: 32, title: ["Telegram", "تيليجرام"], desc: ["User, group or channel", "مستخدم أو مجموعة أو قناة"], url: (h) => `https://t.me/${h}`, placeholder: "username", hint: ["5–32 characters — dots are fine", "من 5 إلى 32 حرفاً — النقاط مسموحة"] },
+  { id: "pinterest", min: 3, max: 30, title: ["Pinterest", "بنترست"], desc: ["Open your profile", "افتح حسابك"], url: (h) => `https://www.pinterest.com/${h}/`, placeholder: "username", hint: ["3–30 characters", "من 3 إلى 30 حرفاً"] },
+  { id: "threads", min: 1, max: 30, title: ["Threads", "ثريدز"], desc: ["Open your profile", "افتح حسابك"], url: (h) => `https://www.threads.net/@${h}`, placeholder: "username", hint: ["Same as your Instagram name", "مثل اسمك في إنستغرام"] },
+  { id: "discord", min: 2, max: 32, title: ["Discord", "ديسكورد"], desc: ["Server invite", "دعوة إلى خادم"], url: (h) => `https://discord.gg/${h}`, placeholder: "invite-code", hint: ["Invite code or discord.gg link", "رمز الدعوة أو رابط discord.gg"] },
 ];
 
 const handleTypes: QrTypeDef[] = HANDLE_PLATFORMS.map((p) => {
   const fields = [f("handle", "text", ["Username", "اسم المستخدم"], { required: true, placeholder: p.placeholder, prefix: p.id === "discord" ? "" : "@", hint: p.hint, dir: "ltr", maxLength: 200 })];
   return def(p.id, "social", p.title, p.desc, p.id, fields, (v) => p.url(handleOf(trim(v, "handle"))), (v, errs) => {
     const h = handleOf(trim(v, "handle"));
-    if (h && !p.re.test(h)) errs.handle = E.user;
+    if (!h) return;
+    if (h.length < p.min || h.length > p.max) errs.handle = [`Username must be ${p.min}–${p.max} characters`, `يجب أن يكون اسم المستخدم من ${p.min} إلى ${p.max} حرفاً`];
+    else if (!HANDLE_OK.test(h)) errs.handle = E.user;
   });
 });
 
@@ -564,30 +581,6 @@ const raw = def(
   (v) => v.text ?? "",
 );
 
-export const QR_TYPES: QrTypeDef[] = [
-  ...handleTypes.slice(0, 2),
-  handleTypes[2],
-  whatsapp,
-  handleTypes[5],
-  youtube,
-  handleTypes[3],
-  linkedin,
-  handleTypes[4],
-  handleTypes[6],
-  handleTypes[7],
-  handleTypes[8],
-  urlType, customLink, appLink, location,
-  vcard, event, product,
-  phone, sms, email,
-  wifi,
-  contact, text, multitext,
-  paypal, crypto, epc, upi, shamcash,
-  spotify, soundcloud, vimeo, fileLink,
-  raw,
-];
-
-export const TYPE_BY_ID: Record<string, QrTypeDef> = Object.fromEntries(QR_TYPES.map((t) => [t.id, t]));
-
 export interface CategoryDef {
   id: QrCategoryId;
   title: Tx;
@@ -606,8 +599,50 @@ export const CATEGORIES: CategoryDef[] = [
   { id: "media", title: ["Media", "المحتوى والوسائط"], desc: ["Music, video and files", "موسيقى وفيديو وملفات"], icon: "play" },
 ];
 
+/**
+ * Where every type sits, category by category.
+ *
+ * This is the one list: the "All" grid is it flattened, and each category tab
+ * reads its own line out of it, so the two can never drift apart. It replaces a
+ * pile of `handleTypes[5]` indices that nobody could read and that silently
+ * reshuffled the grid whenever a platform was added.
+ */
+const CATEGORY_ORDER: Record<QrCategoryId, string[]> = {
+  // The platforms people look for first, in the order they look for them.
+  social: ["instagram", "facebook", "tiktok", "whatsapp", "telegram", "youtube", "x", "linkedin", "snapchat", "pinterest", "threads", "discord"],
+  links: ["url", "location", "app", "custom"],
+  business: ["vcard", "event", "product"],
+  telecom: ["phone", "sms", "email"],
+  network: ["wifi"],
+  personal: ["contact", "text", "multitext"],
+  // Sham Cash leads: for the people this app is built for it is the wallet they
+  // use every week, ahead of the international services.
+  payment: ["shamcash", "paypal", "crypto", "upi", "epc"],
+  media: ["spotify", "soundcloud", "vimeo", "file"],
+};
+
+const ALL_TYPES: QrTypeDef[] = [
+  ...handleTypes,
+  whatsapp, youtube, linkedin,
+  urlType, customLink, appLink, location,
+  vcard, event, product,
+  phone, sms, email,
+  wifi,
+  contact, text, multitext,
+  paypal, crypto, epc, upi, shamcash,
+  spotify, soundcloud, vimeo, fileLink,
+  raw,
+];
+
+export const TYPE_BY_ID: Record<string, QrTypeDef> = Object.fromEntries(ALL_TYPES.map((t) => [t.id, t]));
+
+export const QR_TYPES: QrTypeDef[] = [
+  ...CATEGORIES.flatMap((c) => typesOfCategory(c.id)),
+  raw,
+];
+
 export function typesOfCategory(c: QrCategoryId): QrTypeDef[] {
-  return QR_TYPES.filter((t) => t.category === c);
+  return (CATEGORY_ORDER[c] ?? []).map((id) => TYPE_BY_ID[id]).filter((t): t is QrTypeDef => !!t);
 }
 
 export function visibleFields(type: QrTypeDef, v: FormValues): FieldDef[] {
@@ -681,6 +716,9 @@ export function detectType(content: string): string {
   if (up.startsWith("BITCOIN:") || up.startsWith("ETHEREUM:") || up.startsWith("LITECOIN:")) return "crypto";
   if (up.startsWith("UPI://")) return "upi";
   if (/^BCD\n/i.test(s)) return "epc";
+  // A Sham Cash wallet code is a bare 32-character address — the only thing its
+  // QR can hold — so scanning one should say so instead of "plain text".
+  if (/^[A-Za-z0-9]{32}$/.test(s)) return "shamcash";
   if (/^https?:\/\//i.test(s)) {
     try {
       const u = new URL(s);

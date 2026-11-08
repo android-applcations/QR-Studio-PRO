@@ -136,6 +136,50 @@ try {
   await page.waitForFunction(() => !!document.querySelector('nav[aria-label="Main navigation"]'), { timeout: 25000 });
   await sleep(1200);
 
+  // ------------------------------------------------------- create-grid order
+  // Every category should list its tiles in a deliberate order — the ones people
+  // reach for first, first — instead of whatever order the registry happens to be.
+  const sectionTitles = await page.evaluate(() => {
+    const label = (s) => (s.getAttribute("aria-label") || s.querySelector("h3")?.textContent || "").trim();
+    return [...document.querySelectorAll("section[aria-label]")].map((s) => ({
+      title: label(s),
+      tiles: [...s.querySelectorAll("button")].map((b) => (b.textContent || "").trim()),
+    }));
+  });
+  const sectionFor = (re) => (sectionTitles.find((s) => re.test(s.title)) ?? { tiles: [] }).tiles;
+  // Tile text is the title glued to its description; match on the title prefix.
+  const startsWith = (tiles, name) => tiles.findIndex((t) => t.toLowerCase().startsWith(name.toLowerCase()));
+
+  const social = sectionFor(/Social media|التواصل الاجتماعي/);
+  const SOCIAL_ORDER = ["Instagram", "Facebook", "TikTok", "WhatsApp", "Telegram", "YouTube"];
+  const socialIdx = SOCIAL_ORDER.map((n) => startsWith(social, n));
+  check(
+    "social tiles follow the agreed order",
+    socialIdx.every((i) => i >= 0) && socialIdx.every((v, i) => i === 0 || v > socialIdx[i - 1]),
+    JSON.stringify(social.slice(0, 8)),
+  );
+
+  const payment = sectionFor(/Payment|الدفع/);
+  const PAY_ORDER = ["Sham Cash", "PayPal", "Crypto"];
+  const payIdx = PAY_ORDER.map((n) => startsWith(payment, n));
+  check(
+    "payment tiles follow the agreed order, Sham Cash first",
+    payIdx.every((i) => i >= 0) && payIdx.every((v, i) => i === 0 || v > payIdx[i - 1]),
+    JSON.stringify(payment),
+  );
+
+  const links = sectionFor(/Sites & links|المواقع والروابط/);
+  const linksIdx = ["Website", "Location", "App"].map((n) => startsWith(links, n));
+  check(
+    "link tiles follow the agreed order",
+    linksIdx.every((i) => i >= 0) && linksIdx.every((v, i) => i === 0 || v > linksIdx[i - 1]),
+    JSON.stringify(links),
+  );
+
+  // A type that exists in the registry must not silently vanish from the grid.
+  const allTiles = sectionTitles.flatMap((s) => s.tiles);
+  check("no type is dropped by the ordering", allTiles.length >= 30, `${allTiles.length} tiles`);
+
   // ------------------------------------------------------- find the type
   await page.evaluate(() => {
     const i = document.querySelector('input[aria-label="Search"]');
