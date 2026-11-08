@@ -7,6 +7,7 @@ import { useApp } from "../state/AppContext";
 import { usePwa } from "../pwa/PwaProvider";
 import { downloadBlob, timestampName } from "../engine/exportEngine";
 import { cn } from "../utils/cn";
+import { openExternal } from "../core/openExternal";
 import { WhatsAppMark } from "./BrandIcon";
 import ConnectionStatus from "./ConnectionStatus";
 import InstallButton from "./InstallButton";
@@ -314,6 +315,11 @@ export function SettingsSheet() {
                 href={`https://wa.me/${WA_NUMBER}?text=${waText}`}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={(e) => {
+                  // Hand the link to the OS the same way the scanner does, so it
+                  // also escapes an installed app (Custom Tab → WhatsApp).
+                  if (openExternal(`https://wa.me/${WA_NUMBER}?text=${waText}`) !== "refused") e.preventDefault();
+                }}
                 aria-label={t(["Contact the developer on WhatsApp", "تواصل مع المطور عبر واتساب"])}
                 className="press group relative flex min-h-16 items-center gap-3 overflow-hidden rounded-2xl bg-gradient-to-br from-[#25d366] to-[#128c7e] p-3 text-white shadow-[0_10px_28px_-12px_#25d366] transition-[filter] hover:brightness-110"
               >

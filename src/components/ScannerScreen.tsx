@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Camera, CameraOff, Check, Clipboard, ExternalLink, Eye, EyeOff, ImageUp, Pause, Play, RefreshCw, Save, Share2, ShieldAlert, Sparkles, Zap, ZapOff } from "lucide-react";
 import { detectType, TYPE_BY_ID } from "../core/qrTypes";
 import { analyzeLink } from "../core/security";
+import { openExternal, watchHandoff } from "../core/openExternal";
 import { T } from "../core/i18n";
 import { addHistory } from "../db/db";
 import { redactForLog } from "../core/qrTypes";
@@ -51,14 +52,32 @@ function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void 
       danger: link.warnings.length > 0,
     });
     if (!ok) return;
-    const a = document.createElement("a");
-    a.href = link.href;
-    a.target = link.kind === "web" ? "_blank" : "_self";
-    a.rel = "noopener noreferrer";
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+
+    const handoff = openExternal(link.href);
+    if (handoff === "refused") {
+      fail(new Error("link refused"));
+      return;
+    }
+    if (handoff === "blocked") {
+      toast(t(["The browser blocked opening this link.", "منع المتصفح فتح هذا الرابط."]), "info");
+      return;
+    }
+
+    // A deep link (instagram://…, whatsapp://…) is simply dropped when no app on
+    // the device answers it. If the user is still here after a moment, say so
+    // and put the link in their clipboard instead of leaving them waiting.
+    if (link.kind === "app") {
+      watchHandoff(2500, () => {
+        void copyText(link.href).catch(() => {});
+        toast(
+          t([
+            "No app on this device answered this link — it was copied instead.",
+            "لا يوجد تطبيق على هذا الجهاز يستقبل هذا الرابط — تم نسخه بدلاً من ذلك.",
+          ]),
+          "info",
+        );
+      });
+    }
   };
   const onSave = async () => {
     try {
