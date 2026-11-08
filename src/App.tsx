@@ -10,12 +10,27 @@ import { cn } from "./utils/cn";
 import CreateScreen from "./components/CreateScreen";
 import { ConfirmHost, IconBtn, Spinner, ToastHost } from "./components/ui";
 import { SettingsSheet } from "./components/SettingsSheet";
+import ConnectionStatus from "./components/ConnectionStatus";
+import InstallButton from "./components/InstallButton";
 
-const DesignEditor = lazy(() => import("./components/DesignEditor"));
-const ScannerScreen = lazy(() => import("./components/ScannerScreen"));
-const LibraryScreen = lazy(() => import("./components/LibraryScreen"));
-const HistoryScreen = lazy(() => import("./components/HistoryScreen"));
-const TemplatesScreen = lazy(() => import("./components/TemplatesScreen"));
+/**
+ * Lazily loaded screens. The loaders are kept in one place so the same chunks can
+ * be warmed up in the background — every one of them is precached by the service
+ * worker, so switching screens works with no network at all.
+ */
+const SCREENS = {
+  design: () => import("./components/DesignEditor"),
+  scan: () => import("./components/ScannerScreen"),
+  library: () => import("./components/LibraryScreen"),
+  history: () => import("./components/HistoryScreen"),
+  templates: () => import("./components/TemplatesScreen"),
+} as const;
+
+const DesignEditor = lazy(SCREENS.design);
+const ScannerScreen = lazy(SCREENS.scan);
+const LibraryScreen = lazy(SCREENS.library);
+const HistoryScreen = lazy(SCREENS.history);
+const TemplatesScreen = lazy(SCREENS.templates);
 
 const NAV: { id: SectionId; label: readonly [string, string]; icon: typeof QrCode }[] = [
   { id: "create", label: T.create, icon: Sparkles },
@@ -39,9 +54,21 @@ class Boundary extends Component<{ children: ReactNode; onReset: () => void }, {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="text-sm text-muted">Something went wrong · حدث خطأ غير متوقع</p>
-        <button type="button" className="press min-h-11 rounded-xl bg-brand px-5 text-white" onClick={() => { this.setState({ err: false }); this.props.onReset(); }}>
-          OK
-        </button>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            className="press min-h-11 rounded-xl bg-brand px-5 text-white"
+            onClick={() => {
+              this.setState({ err: false });
+              this.props.onReset();
+            }}
+          >
+            Retry · إعادة المحاولة
+          </button>
+          <button type="button" className="press min-h-11 rounded-xl border border-line px-5" onClick={() => window.location.reload()}>
+            Reload app · إعادة تحميل التطبيق
+          </button>
+        </div>
       </div>
     );
   }
@@ -70,9 +97,38 @@ function StorageChip() {
   );
 }
 
+/** Warm the lazy chunks in the background so every screen opens instantly (and offline). */
+function usePreloadScreens() {
+  useEffect(() => {
+    let cancelled = false;
+    const run = () => {
+      if (cancelled) return;
+      for (const load of Object.values(SCREENS)) void load().catch(() => {});
+    };
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    let id: number | undefined;
+    if (typeof w.requestIdleCallback === "function") {
+      id = w.requestIdleCallback(run, { timeout: 15000 });
+      return () => {
+        cancelled = true;
+        if (id != null) w.cancelIdleCallback?.(id);
+      };
+    }
+    id = window.setTimeout(run, 2000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(id);
+    };
+  }, []);
+}
+
 function Shell() {
   const { t, lang, setLang, section, go, setSettingsOpen } = useApp();
   const [boundaryKey, setBoundaryKey] = useState(0);
+  usePreloadScreens();
 
   const screen = (() => {
     switch (section) {
@@ -91,7 +147,9 @@ function Shell() {
       <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-line bg-surface/90 px-3 md:px-5">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand to-brand2 text-white shadow-[0_6px_16px_-6px_var(--c-brand)]"><QrCode size={20} /></div>
         <h1 className="min-w-0 flex-1 truncate text-[17px] font-extrabold tracking-tight">QR Studio <span className="text-brand">Pro</span></h1>
+        <ConnectionStatus className="hidden md:flex" />
         <StorageChip />
+        <InstallButton compact />
         <button type="button" onClick={() => setLang(lang === "ar" ? "en" : "ar")} className="press min-h-10 min-w-10 rounded-xl border border-line bg-surface2/60 px-3 text-sm font-bold" aria-label={t(["Switch language", "تبديل اللغة"])} title={t(["Switch language", "تبديل اللغة"])}>
           {lang === "ar" ? "EN" : "ع"}
         </button>
@@ -110,7 +168,7 @@ function Shell() {
         </nav>
 
         <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-          <Boundary key={boundaryKey} onReset={() => { setBoundaryKey((k) => k + 1); go("create"); }}>
+          <Boundary key={`${boundaryKey}-${section}`} onReset={() => { setBoundaryKey((k) => k + 1); go("create"); }}>
             <div key={section} className="anim-fade-in h-full">
               <Suspense fallback={<div className="flex h-full items-center justify-center gap-2 text-muted"><Spinner />{t(T.loading)}</div>}>
                 {screen}

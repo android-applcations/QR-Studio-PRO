@@ -62,9 +62,21 @@ export function IconBtn({ label, className, children, active, ...rest }: ButtonH
 export function Modal({ open, onClose, title, children, wide, footer }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean; footer?: ReactNode }) {
   const id = useId();
   const ref = useRef<HTMLDivElement>(null);
+
+  // Move focus into the dialog and restore it on close. This must only run when
+  // `open` changes — re-running it on every render would steal focus from inputs
+  // inside the dialog while the user is typing.
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
+    ref.current?.focus();
+    return () => {
+      prev?.focus?.();
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
       if (e.key === "Tab" && ref.current) {
@@ -77,10 +89,8 @@ export function Modal({ open, onClose, title, children, wide, footer }: { open: 
       }
     };
     document.addEventListener("keydown", onKey);
-    ref.current?.focus();
     return () => {
       document.removeEventListener("keydown", onKey);
-      prev?.focus?.();
     };
   }, [open, onClose]);
   if (!open) return null;

@@ -7,7 +7,7 @@ import { addHistory } from "../db/db";
 import { redactForLog } from "../core/qrTypes";
 import { useApp } from "../state/AppContext";
 import { useProject } from "../state/ProjectContext";
-import { CameraSession, cameraErrorKind, decodeImageFile, type CameraCaps, type CameraErrorKind } from "../engine/scannerEngine";
+import { CameraSession, cameraErrorKind, cameraSupported, decodeImageFile, type CameraCaps, type CameraErrorKind } from "../engine/scannerEngine";
 import { canShareText, copyText, shareText } from "../engine/exportEngine";
 import { cn } from "../utils/cn";
 import { TypeIcon } from "./BrandIcon";
@@ -122,7 +122,10 @@ function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void 
 export default function ScannerScreen() {
   const { t, toast, fail, logActivity, section } = useApp();
   const videoRef = useRef<HTMLVideoElement>(null);
-  const session = useRef(new CameraSession());
+  // Lazy, render-stable camera session (created once per mounted screen).
+  const sessionRef = useRef<CameraSession | null>(null);
+  const session = (sessionRef.current ??= new CameraSession());
+  const alive = useRef(true);
   const fileRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<Status>("starting");
   const [errKind, setErrKind] = useState<CameraErrorKind>("unknown");
@@ -140,7 +143,7 @@ export default function ScannerScreen() {
 
   const onFound = useCallback((found: string[]) => {
     if (codesRef.current) return;
-    session.current.pauseLoop();
+    session.pauseLoop();
     setCodes(found);
     try { navigator.vibrate?.(60); } catch { /* optional */ }
     for (const c of found) logActivity({ action: "scan", type: detectType(c), content: c });
@@ -152,17 +155,30 @@ export default function ScannerScreen() {
     setStatus("starting");
     setTorch(false);
     setImgError(false);
+    if (!cameraSupported()) {
+      session.stop();
+      setErrKind(window.isSecureContext === false ? "insecure" : "unsupported");
+      setStatus("error");
+      return;
+    }
     try {
-      const c = await session.current.start(v, { deviceId: opts?.deviceId, facing: opts?.facing ?? facing });
+      const c = await session.start(v, { deviceId: opts?.deviceId, facing: opts?.facing ?? facing });
+      // The screen may have been left while the camera permission dialog was open.
+      if (!alive.current) {
+        session.stop();
+        return;
+      }
       setCaps(c);
       setZoom(c.zoom?.min ?? 1);
       setStatus("live");
-      session.current.loop(v, onFound);
+      session.loop(v, onFound);
       const list = await CameraSession.listCameras();
+      if (!alive.current) return;
       setCams(list);
-      setDeviceId(session.current.currentDeviceId() ?? "");
+      setDeviceId(session.currentDeviceId() ?? "");
     } catch (e) {
-      session.current.stop();
+      session.stop();
+      if (!alive.current) return;
       setErrKind(cameraErrorKind(e));
       setStatus("error");
     }
@@ -170,36 +186,45 @@ export default function ScannerScreen() {
 
   // Start on mount; always release the camera on unmount / hidden page
   useEffect(() => {
+    alive.current = true;
     void start();
-    const s = session.current;
+    const s = sessionRef.current ?? session;
+    const release = () => {
+      s.stop();
+      setStatus((st) => (st === "error" ? st : "stopped"));
+    };
     const onVis = () => {
-      if (document.hidden) { s.stop(); setStatus((st) => (st === "error" ? st : "stopped")); }
+      if (document.hidden) release();
     };
     document.addEventListener("visibilitychange", onVis);
+    // pagehide covers bfcache / tab close where visibilitychange may not fire
+    window.addEventListener("pagehide", release);
     return () => {
+      alive.current = false;
       document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", release);
       s.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => { if (section !== "scan") session.current.stop(); }, [section]);
+  useEffect(() => { if (section !== "scan") session.stop(); }, [section]);
 
-  const stop = () => { session.current.stop(); setStatus("stopped"); setTorch(false); };
+  const stop = () => { session.stop(); setStatus("stopped"); setTorch(false); };
 
   const again = () => {
     setCodes(null);
     setImgError(false);
-    if (status === "live" && videoRef.current) session.current.loop(videoRef.current, onFound);
+    if (status === "live" && videoRef.current) session.loop(videoRef.current, onFound);
     else void start({ deviceId: deviceId || undefined });
   };
 
   const toggleTorch = async () => {
-    try { await session.current.setTorch(!torch); setTorch(!torch); } catch { toast(t(["Flash isn't available on this camera", "المصباح غير متاح في هذه الكاميرا"]), "err"); }
+    try { await session.setTorch(!torch); setTorch(!torch); } catch { toast(t(["Flash isn't available on this camera", "المصباح غير متاح في هذه الكاميرا"]), "err"); }
   };
   const changeZoom = async (z: number) => {
     setZoom(z);
-    try { await session.current.setZoom(z); } catch { /* ignore */ }
+    try { await session.setZoom(z); } catch { /* ignore */ }
   };
 
   const onImage = async (f: File | undefined) => {
@@ -210,7 +235,7 @@ export default function ScannerScreen() {
     try {
       const found = await decodeImageFile(f);
       if (!found.length) { setImgError(true); return; }
-      session.current.pauseLoop();
+      session.pauseLoop();
       setCodes(found);
       for (const c of found) logActivity({ action: "scan", type: detectType(c), content: c });
     } catch (e) { fail(e); } finally { setBusyImg(false); }
@@ -220,7 +245,8 @@ export default function ScannerScreen() {
     denied: ["Camera permission was denied. Allow camera access for this app in your device settings, then try again.", "تم رفض إذن الكاميرا. اسمح بالوصول إلى الكاميرا لهذا التطبيق من إعدادات الجهاز ثم حاول مجدداً."],
     none: ["No camera was found on this device.", "لم يتم العثور على كاميرا في هذا الجهاز."],
     busy: ["The camera is being used by another app.", "الكاميرا مستخدمة من تطبيق آخر."],
-    insecure: ["The camera needs a secure (HTTPS) context.", "تتطلب الكاميرا سياقاً آمناً (HTTPS)."],
+    insecure: ["The camera needs a secure (HTTPS) context. Open the app over HTTPS or from an installed app.", "تتطلب الكاميرا سياقاً آمناً (HTTPS). افتح التطبيق عبر HTTPS أو من التطبيق المثبّت."],
+    unsupported: ["This browser does not support camera access. You can still scan a QR code from an image.", "هذا المتصفح لا يدعم الوصول إلى الكاميرا. يمكنك مسح رمز QR من صورة."],
     unknown: ["Could not start the camera.", "تعذر تشغيل الكاميرا."],
   };
 
