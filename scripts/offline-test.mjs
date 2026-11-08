@@ -106,6 +106,13 @@ const browser = await puppeteer.launch({
 });
 
 const page = await browser.newPage();
+// The app animates screen changes with the View Transition API, which only runs
+// once Chromium produces a frame. Headless with --disable-gpu never does, so a
+// click that should open a screen would hang forever. Emulating the "reduce
+// motion" preference makes the app take its plain, instant path instead — which
+// is also what a user with that preference gets.
+await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+
 await page.setViewport({ width: 1400, height: 1000 });
 
 // Count UI sounds without needing an audio device: every sound creates a buffer source.
@@ -135,6 +142,25 @@ page.on("pageerror", (e) => consoleErrors.push("pageerror: " + String(e).slice(0
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+/**
+ * Actually cut the network. In this Chromium build `page.setOfflineMode` reports
+ * success without flipping `navigator.onLine`, so the app never sees a change;
+ * driving the network domain directly does flip it.
+ */
+let netSession = null;
+const setOffline = async (offline) => {
+  if (!netSession) {
+    netSession = await page.createCDPSession();
+    await netSession.send("Network.enable");
+  }
+  await netSession.send("Network.emulateNetworkConditions", {
+    offline,
+    latency: 0,
+    downloadThroughput: -1,
+    uploadThroughput: -1,
+  });
+};
+
 const clickText = async (text, sel = "button", last = false) => {
   const ok = await page.evaluate(
     (text, sel, last) => {
@@ -369,7 +395,7 @@ try {
   check("online: QR saved", d1.rows === 1, `rows=${d1.rows} names=${JSON.stringify(d1.names)}`);
 
   // =========================================================== PHASE B — offline
-  await page.setOfflineMode(true);
+  await setOffline(true);
   await sleep(300);
   await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
   check("offline: app boots from the precache", await hasText("QR Studio", 25000));
@@ -597,7 +623,7 @@ try {
   );
 
   // =========================================================== PHASE C — update
-  await page.setOfflineMode(false);
+  await setOffline(false);
   await page.goto(BASE, { waitUntil: "networkidle2", timeout: 40000 });
   await page.waitForFunction(() => !!navigator.serviceWorker?.controller, { timeout: 25000 });
   check("back online: app loads again", await hasText("QR Studio", 20000));
@@ -652,7 +678,7 @@ try {
 
   const states = [];
   for (const offline of [true, false, true, false]) {
-    await page.setOfflineMode(offline);
+    await setOffline(offline);
     await sleep(2000);
     states.push(
       await page.evaluate(() => ({

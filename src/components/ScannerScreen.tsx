@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Camera, CameraOff, Check, Clipboard, ExternalLink, Eye, EyeOff, ImageUp, Pause, Play, RefreshCw, Save, Share2, ShieldAlert, Sparkles, Wifi, Zap, ZapOff } from "lucide-react";
 import { detectType, TYPE_BY_ID } from "../core/qrTypes";
 import { analyzeLink } from "../core/security";
-import { openExternal, watchHandoff } from "../core/openExternal";
-import { describeScan, hasSecretField, wifiPassword, wifiSsid } from "../core/scanView";
+import { openExternal, openInAppOrBrowser, watchHandoff } from "../core/openExternal";
+import { describeScan, hasSecretField } from "../core/scanView";
 import { T } from "../core/i18n";
 import { addHistory } from "../db/db";
 import { redactForLog } from "../core/qrTypes";
@@ -54,7 +54,8 @@ function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void 
     });
     if (!ok) return;
 
-    const handoff = openExternal(link.href);
+    // A link that belongs to an app opens there; otherwise the browser gets it.
+    const handoff = link.kind === "web" ? openInAppOrBrowser(link.href) : openExternal(link.href);
     if (handoff === "refused") {
       fail(new Error("link refused"));
       return;
@@ -81,34 +82,12 @@ function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void 
     }
   };
   /**
-   * Wi-Fi only. No web page can join a network on the user's behalf, so this
-   * does the two things that actually help: put the password on the clipboard
-   * and open the device's Wi-Fi settings, where it can be pasted.
+   * Wi-Fi only. Joining a network is not something a web page is allowed to do,
+   * and until we ship a way that is, the button says so plainly instead of
+   * pretending to connect.
    */
-  const onConnectWifi = async () => {
-    const password = wifiPassword(content);
-    const ssid = wifiSsid(content);
-    try {
-      await copyText(password || ssid);
-    } catch {
-      /* clipboard unavailable — the settings still open */
-    }
-    const android = /android/i.test(navigator.userAgent);
-    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    if (android) openExternal("intent:#Intent;action=android.settings.WIFI;end");
-    else if (ios) openExternal("App-Prefs:WIFI");
-    toast(
-      password
-        ? t([
-            "Password copied — pick the network in the Wi-Fi settings and paste it.",
-            "نُسخت كلمة المرور — اختر الشبكة في إعدادات Wi-Fi والصقها.",
-          ])
-        : t([
-            "This network has no password. Pick it in the Wi-Fi settings.",
-            "هذه الشبكة بدون كلمة مرور. اخترها من إعدادات Wi-Fi.",
-          ]),
-      "info",
-    );
+  const onConnectWifi = () => {
+    toast(t(["This feature is under development.", "جاري تطوير هذه الخاصية."]), "info");
   };
   const onSave = async () => {
     try {

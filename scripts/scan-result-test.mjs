@@ -77,6 +77,13 @@ const browser = await puppeteer.launch({
   args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
 });
 const page = await browser.newPage();
+// The app animates screen changes with the View Transition API, which only runs
+// once Chromium produces a frame. Headless with --disable-gpu never does, so a
+// click that should open a screen would hang forever. Emulating the "reduce
+// motion" preference makes the app take its plain, instant path instead — which
+// is also what a user with that preference gets.
+await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+
 await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
 
 const setValue = (sel, val) =>
@@ -250,9 +257,41 @@ try {
     check("Wi-Fi: the reveal button shows the real password", shown?.value === "mySecretPass123", JSON.stringify(shown));
 
     check("Wi-Fi: offers 'Connect to network'", await hasButton("Connect to network", "الاتصال بالشبكة"));
+
+    // Pressing it must not try to join the network — it says the work is coming.
+    await page.evaluate(() => {
+      const b = [...document.querySelectorAll("button")].find((e) => /^(Connect to network|الاتصال بالشبكة)$/.test((e.textContent || "").trim()));
+      b?.click();
+    });
+    await sleep(900);
+    const wifiBody = await page.evaluate(() => document.body.innerText || "");
+    check(
+      "Wi-Fi: 'Connect to network' says the feature is under development",
+      /جاري تطوير هذه الخاصية|This feature is under development/.test(wifiBody),
+      wifiBody.slice(0, 160).replace(/\n+/g, " | "),
+    );
+
     const of = await overflow();
     check("Wi-Fi: the result fits a phone screen", of.count === 0 && of.doc <= of.vw, `${of.count} ${of.first}`);
   }
+
+  // ------------------------------------------------------------------ Settings
+  // The offline-file box was removed; the rest of the section must be untouched.
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll("button")].find((e) => (e.getAttribute("aria-label") || "").includes("Settings"));
+    b?.click();
+  });
+  await sleep(1400);
+  const settingsText = await page.evaluate(() => {
+    const sheets = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')];
+    const host = sheets[sheets.length - 1] ?? document.body;
+    return host.innerText || "";
+  });
+  const settingsFlat = settingsText.slice(0, 400).replace(/\n+/g, " | ");
+  check("Settings: the offline-files box is gone", !/Offline files|ملفات دون انترنت|ملفات دون الإنترنت|دون انترنت/i.test(settingsText), settingsFlat);
+  check("Settings: the rest of the section is intact", /WhatsApp|واتساب/i.test(settingsText), settingsFlat);
+  await page.keyboard.press("Escape");
+  await sleep(800);
 
   // ------------------------------------------------------------------ URL
   const urlFile = join(tmpdir(), "qr-scan-url.png");

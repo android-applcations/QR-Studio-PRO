@@ -81,6 +81,13 @@ const browser = await puppeteer.launch({
   args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
 });
 const page = await browser.newPage();
+// The app animates screen changes with the View Transition API, which only runs
+// once Chromium produces a frame. Headless with --disable-gpu never does, so a
+// click that should open a screen would hang forever. Emulating the "reduce
+// motion" preference makes the app take its plain, instant path instead — which
+// is also what a user with that preference gets.
+await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+
 await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
 
 // Record every attempt to follow a link, whoever makes it.
@@ -292,11 +299,50 @@ try {
     a.scrollIntoView({ block: "center" });
     a.click();
   });
-  await sleep(2000);
+  await sleep(2500); // the browser fallback fires 1.5s after the app link
   const waEvents = await page.evaluate(() => window.__nav);
-  const wa = waEvents.find((e) => (e.href || "").includes("wa.me"));
-  check("WhatsApp button is handed off", !!wa, JSON.stringify(waEvents));
-  check("WhatsApp button uses target=_blank", wa?.target === "_blank", `target="${wa?.target}"`);
+  const waApp = waEvents.find((e) => (e.href || "").startsWith("whatsapp://"));
+  const waWeb = waEvents.find((e) => (e.href || "").includes("wa.me"));
+  check("WhatsApp button opens the chat in WhatsApp itself", /^whatsapp:\/\/send\?phone=447454190643&/.test(waApp?.href || ""), JSON.stringify(waEvents));
+  check("WhatsApp button falls back to wa.me in the browser", !!waWeb, JSON.stringify(waEvents.map((e) => e.href)));
+  check("WhatsApp button uses target=_blank", waApp?.target === "_blank", `target="${waApp?.target}"`);
+
+  // ---------------------------------------------------------------- deep links
+  // A link that belongs to an app must be tried in that app first, and fall back
+  // to the browser when the device has no app that answers.
+  const ANDROID_UA =
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36";
+  const DESKTOP_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+
+  const appCases = [
+    { name: "YouTube", card: "Website", value: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", app: /^vnd\.youtube:dQw4w9WgXcQ$/, web: "youtube.com/watch?v=dQw4w9WgXcQ" },
+    { name: "Instagram", card: "Website", value: "https://www.instagram.com/abuomar/", app: /^instagram:\/\/user\?username=abuomar$/, web: "instagram.com/abuomar" },
+    { name: "Telegram", card: "Website", value: "https://t.me/qrstudiopro", app: /^tg:\/\/resolve\?domain=qrstudiopro$/, web: "t.me/qrstudiopro" },
+    { name: "TikTok", card: "Website", value: "https://www.tiktok.com/@abuomar", app: /^tiktok:\/\/user\/@abuomar$/, web: "tiktok.com/@abuomar" },
+    { name: "X", card: "Website", value: "https://x.com/abuomar", app: /^twitter:\/\/user\?screen_name=abuomar$/, web: "x.com/abuomar" },
+  ];
+
+  for (const c of appCases) {
+    await page.setUserAgent(ANDROID_UA);
+    const file = join(tmpdir(), `qr-app-${c.name}.png`);
+    const made = await makeQr(c.card, c.value, file);
+    check(`create: built a QR for ${c.name}`, made);
+    if (!made) continue;
+    const { events } = await scanAndOpen(file);
+    const hrefs = events.map((e) => e.href || "");
+    check(`${c.name}: the app's own link is tried first`, hrefs.some((h) => c.app.test(h)), JSON.stringify(hrefs));
+    check(`${c.name}: falls back to the browser when no app answers`, hrefs.some((h) => h.includes(c.web)), JSON.stringify(hrefs));
+  }
+
+  // On a desktop there is no YouTube app to hand off to — go straight to the web.
+  await page.setUserAgent(DESKTOP_UA);
+  const ytDesktop = join(tmpdir(), "qr-app-desktop.png");
+  if (await makeQr("Website", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", ytDesktop)) {
+    const { events } = await scanAndOpen(ytDesktop);
+    const hrefs = events.map((e) => e.href || "");
+    check("desktop: no app scheme, the browser opens the link", !hrefs.some((h) => /^vnd\.youtube:/.test(h)) && hrefs.some((h) => h.includes("youtube.com")), JSON.stringify(hrefs));
+  }
+  await page.setUserAgent(ANDROID_UA);
 
   // ---------------------------------------------------------------- safety
   await page.keyboard.press("Escape");

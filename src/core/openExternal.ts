@@ -18,6 +18,8 @@
  * browser tab just behaves like a browser tab.
  */
 
+import { nativeAppUrl } from "./appLinks";
+
 /** Result of a hand-off attempt. */
 export type OpenHandoff = "handed-off" | "blocked" | "refused";
 
@@ -99,6 +101,27 @@ export function openExternal(rawHref: string): OpenHandoff {
   } catch {
     return "blocked";
   }
+}
+
+/**
+ * Open a web URL in the app that owns it, and in the browser when it is not
+ * installed.
+ *
+ * The app's own deep link is fired first; if nothing on the device answers it
+ * the page never loses visibility, and we then open the same URL in the browser.
+ * So a YouTube link opens YouTube, and on a phone without YouTube it opens the
+ * default browser at exactly the same video.
+ */
+export function openInAppOrBrowser(webUrl: string): OpenHandoff {
+  const appUrl = nativeAppUrl(webUrl);
+  if (!appUrl) return openExternal(webUrl);
+
+  const result = openExternal(appUrl);
+  if (result !== "handed-off") return result === "refused" ? openExternal(webUrl) : result;
+
+  // Give the device a moment: if we are still here, the app is not installed.
+  watchHandoff(1500, () => openExternal(webUrl));
+  return result;
 }
 
 /**

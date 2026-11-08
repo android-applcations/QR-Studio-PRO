@@ -127,6 +127,13 @@ try {
   // ---------------------------------------------------------------- 1 & 2
   browser = await launch(false);
   let page = await browser.newPage();
+// The app animates screen changes with the View Transition API, which only runs
+// once Chromium produces a frame. Headless with --disable-gpu never does, so a
+// click that should open a screen would hang forever. Emulating the "reduce
+// motion" preference makes the app take its plain, instant path instead — which
+// is also what a user with that preference gets.
+await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+
   await page.setViewport({ width: 390, height: 844, isMobile: true });
   await page.setCacheEnabled(false);
   await page.goto(BASE, { waitUntil: "networkidle2", timeout: 60000 });
@@ -168,6 +175,13 @@ try {
   // —— cold start, fully offline, with a damaged cache
   browser = await launch(true);
   page = await browser.newPage();
+// The app animates screen changes with the View Transition API, which only runs
+// once Chromium produces a frame. Headless with --disable-gpu never does, so a
+// click that should open a screen would hang forever. Emulating the "reduce
+// motion" preference makes the app take its plain, instant path instead — which
+// is also what a user with that preference gets.
+await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+
   await page.setViewport({ width: 390, height: 844, isMobile: true });
   await page.setCacheEnabled(false);
   await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
@@ -180,6 +194,13 @@ try {
   // —— back online: the service worker must repair itself
   browser = await launch(false);
   page = await browser.newPage();
+// The app animates screen changes with the View Transition API, which only runs
+// once Chromium produces a frame. Headless with --disable-gpu never does, so a
+// click that should open a screen would hang forever. Emulating the "reduce
+// motion" preference makes the app take its plain, instant path instead — which
+// is also what a user with that preference gets.
+await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+
   await page.setViewport({ width: 390, height: 844, isMobile: true });
   await page.setCacheEnabled(false);
   await page.goto(BASE, { waitUntil: "networkidle2", timeout: 60000 });
@@ -205,6 +226,13 @@ try {
 
   browser = await launch(true);
   page = await browser.newPage();
+// The app animates screen changes with the View Transition API, which only runs
+// once Chromium produces a frame. Headless with --disable-gpu never does, so a
+// click that should open a screen would hang forever. Emulating the "reduce
+// motion" preference makes the app take its plain, instant path instead — which
+// is also what a user with that preference gets.
+await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+
   await page.setViewport({ width: 390, height: 844, isMobile: true });
   await page.setCacheEnabled(false);
   let navError = null;
@@ -229,6 +257,13 @@ try {
   // …and once the connection is back, the wiped cache rebuilds itself.
   browser = await launch(false);
   page = await browser.newPage();
+// The app animates screen changes with the View Transition API, which only runs
+// once Chromium produces a frame. Headless with --disable-gpu never does, so a
+// click that should open a screen would hang forever. Emulating the "reduce
+// motion" preference makes the app take its plain, instant path instead — which
+// is also what a user with that preference gets.
+await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+
   await page.setViewport({ width: 390, height: 844, isMobile: true });
   await page.setCacheEnabled(false);
   await page.goto(BASE, { waitUntil: "networkidle2", timeout: 60000 });

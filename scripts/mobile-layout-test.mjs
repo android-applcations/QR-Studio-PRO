@@ -84,6 +84,13 @@ const browser = await puppeteer.launch({
 });
 
 const page = await browser.newPage();
+// The app animates screen changes with the View Transition API, which only runs
+// once Chromium produces a frame. Headless with --disable-gpu never does, so a
+// click that should open a screen would hang forever. Emulating the "reduce
+// motion" preference makes the app take its plain, instant path instead — which
+// is also what a user with that preference gets.
+await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+
 const consoleErrors = [];
 page.on("pageerror", (e) => consoleErrors.push(String(e).slice(0, 200)));
 
