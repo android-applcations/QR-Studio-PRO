@@ -144,13 +144,22 @@ try {
     i.dispatchEvent(new Event("input", { bubbles: true }));
   });
   await sleep(900);
+  // Read the tile before the click moves us on to the form screen.
   const found = await page.evaluate(() => {
     const b = [...document.querySelectorAll("button")].find((e) => /Sham Cash/i.test(e.textContent || ""));
     if (!b) return { ok: false, cards: [...document.querySelectorAll("button")].map((e) => (e.textContent || "").trim()).slice(0, 8) };
+    const img = b.querySelector("img");
+    const tile = img ? { src: img.getAttribute("src") || "", loaded: img.naturalWidth > 0 } : null;
     b.click();
-    return { ok: true };
+    return { ok: true, tile };
   });
   check("Sham Cash appears in the QR types", found.ok, JSON.stringify(found.cards ?? []));
+  // The official mark is a shipped file, not a stand-in glyph.
+  check(
+    "the type carries the official logo file",
+    found.tile?.loaded === true && /shamcash/.test(found.tile?.src ?? ""),
+    JSON.stringify(found.tile ?? null),
+  );
   if (!found.ok) throw new Error("Sham Cash type not found");
   await sleep(1200);
 
