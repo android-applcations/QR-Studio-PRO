@@ -57,8 +57,19 @@ export function parseCsv(text: string): string[][] {
   }
   row.push(cell);
   if (row.some((c) => c.trim())) rows.push(row);
-  return rows.slice(0, 5000);
+  return rows.slice(0, MAX_BATCH_ROWS);
 }
+
+/**
+ * How many codes one batch may hold.
+ *
+ * Every generated code is kept in memory until it has been saved or zipped, so
+ * the ceiling is a memory budget rather than a quota: past roughly this many,
+ * a phone runs out of room part-way through and the tab dies instead of the
+ * batch finishing. The panel says so and names the number when a file is
+ * bigger, because silently dropping rows of somebody's data is worse.
+ */
+export const MAX_BATCH_ROWS = 1500;
 
 export function buildRows(table: string[][], kind: BatchKind, contentCol: number, nameCol: number): BatchRow[] {
   const type = TYPE_BY_ID[kind === "phone" ? "phone" : kind];

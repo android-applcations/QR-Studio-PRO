@@ -115,6 +115,29 @@ export function rasterizeOffThread(
   return call({ kind: "raster", svg, w, h, bg, mime, quality }, (ok) => ok.blob ?? null);
 }
 
+/**
+ * Rasterise to a Blob, off the UI thread when the worker can do it.
+ *
+ * The single-code exports (a PNG download, a PDF page, the print sheet, the
+ * readability test) each rasterise on their own, and each one of them was
+ * stopping the UI for as long as it took to decode an SVG and paint it at
+ * 1000–3000 px. Same helper everywhere: try the worker, fall back to the canvas.
+ */
+export async function rasterizeBlob(
+  svg: string,
+  w: number,
+  h: number,
+  bg: string | null,
+  mime: string,
+  quality?: number,
+): Promise<Blob> {
+  const off = await rasterizeOffThread(svg, w, h, bg, mime, quality);
+  if (off) return off;
+  const { rasterize } = await import("./raster");
+  const { canvasToBlob } = await import("./raster");
+  return canvasToBlob(await rasterize(svg, w, h, bg), mime, quality);
+}
+
 /** Render a whole batch off the UI thread. `null` when that is not possible. */
 export function generateOffThread(
   rows: { line: number; name: string; content: string }[],

@@ -189,7 +189,9 @@ registerRoute(
     !url.pathname.startsWith("/__probe__/"),
   new StaleWhileRevalidate({
     cacheName: RUNTIME_CACHE,
-    plugins: [new ExpirationPlugin({ maxEntries: 150, maxAgeSeconds: 60 * 60 * 24 * 30 })],
+    // purgeOnQuotaError: when the device runs out of space, drop this cache
+    // rather than let the browser evict the precache the app needs to start.
+    plugins: [new ExpirationPlugin({ maxEntries: 150, maxAgeSeconds: 60 * 60 * 24 * 30, purgeOnQuotaError: true })],
   }),
 );
 

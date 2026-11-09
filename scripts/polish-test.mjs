@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Audit for the polish pass: the create grid, the Sham Cash template, undo and
- * redo from the keyboard, the calendar-event panel, the phishing warning and
+ * redo from the keyboard, the calendar-event panel, silent link protection and
  * light mode.
  *
  * These are the things a person notices rather than the things a unit test
@@ -275,9 +275,13 @@ try {
     );
   }
 
-  // ------------------------------------------------------------ phishing warning
-  // The host is the part a fake gets right. Warn when a trusted name is parked
-  // to the left of the real domain, or misspelled into it.
+  // -------------------------------------------------------- silent protection
+  // Protection says nothing about itself. The app judges the address, changes
+  // what it is willing to do, and shows the person the address itself so they
+  // can judge too. What must be true on screen: the whole host is there, and
+  // not one word of verdict, alarm or advice is written anywhere.
+  const SECURITY_WORDS =
+    /warning|warned|dangerous|unsafe|suspicious|phishing|scam|fraud|malicious|blocked|borrows the name|تحذير|حذر|خطر|غير آمن|مشبوه|تصيد|احتيال|احذر/i;
   const phishFile = join(tmpdir(), "qr-polish-phish.png");
   const madePhish = await makeQr("Website", [["#f-url-url", "https://paypal.com.login-verify.net/signin"]], phishFile);
   check("create: built a look-alike link QR", madePhish);
@@ -285,17 +289,20 @@ try {
     check("scan: the look-alike code was detected", await scan(phishFile));
     const text = await bodyText();
     check(
-      "a look-alike address is called out before it is opened",
-      /borrows the name|يستعير اسم/i.test(text),
+      "the full address of a look-alike is shown as it is",
+      /paypal\.com\.login-verify\.net/.test(text),
       text.slice(0, 200).replace(/\n+/g, " | "),
     );
+    check("nothing is written about it", !SECURITY_WORDS.test(text), (text.match(SECURITY_WORDS) ?? [""])[0]);
   }
-  // …and an honest address must not be flagged.
+  // …and an honest address is treated as ordinary: shown, and equally silent.
   const okFile = join(tmpdir(), "qr-polish-ok.png");
   const madeOk = await makeQr("Website", [["#f-url-url", "https://www.paypal.com/signin"]], okFile);
   if (madeOk) {
     check("scan: the honest code was detected", await scan(okFile));
-    check("an honest address is left alone", !/borrows the name|يستعير اسم/i.test(await bodyText()));
+    const honest = await bodyText();
+    check("an honest address is shown too", /paypal\.com/.test(honest));
+    check("nothing is written about the honest one either", !SECURITY_WORDS.test(honest), (honest.match(SECURITY_WORDS) ?? [""])[0]);
   }
 
   // ------------------------------------------------------------ the Sham Cash template

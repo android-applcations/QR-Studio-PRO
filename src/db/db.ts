@@ -242,13 +242,35 @@ export function primeLogoCache(id: number, url: string) {
 }
 
 // ---------- Batches ----------
-export async function saveBatch(name: string, items: Omit<QrRecord, "id" | "uid" | "batchId" | "created_at" | "updated_at">[]): Promise<number> {
-  return track(db.transaction("rw", db.qr_batches, db.qr_codes, async () => {
-    const now = Date.now();
-    const batchId = await db.qr_batches.add({ name, created_at: now, items_count: items.length });
-    await db.qr_codes.bulkAdd(items.map((it, i) => ({ ...it, uid: uid(), batchId, created_at: now + i, updated_at: now + i }) as QrRecord));
-    return batchId;
-  }));
+/**
+ * Save a generated batch.
+ *
+ * Two things make a 2 000-code batch survivable where a single write is not:
+ *
+ * - the rows go in several transactions instead of one. One `bulkAdd` of
+ *   thousands of records holds every one of them in memory for the life of the
+ *   transaction and blocks every other write to the table while it runs, which
+ *   is how the library screen stops responding during a save;
+ * - `onProgress` is called between slices, so the panel can move.
+ */
+export async function saveBatch(
+  name: string,
+  items: Omit<QrRecord, "id" | "uid" | "batchId" | "created_at" | "updated_at">[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<number> {
+  const now = Date.now();
+  const batchId = await track(db.transaction("rw", db.qr_batches, async () => db.qr_batches.add({ name, created_at: now, items_count: items.length })));
+  const CHUNK = 250;
+  for (let i = 0; i < items.length; i += CHUNK) {
+    const slice = items.slice(i, i + CHUNK);
+    await track(
+      db.transaction("rw", db.qr_codes, () =>
+        db.qr_codes.bulkAdd(slice.map((it, k) => ({ ...it, uid: uid(), batchId, created_at: now + i + k, updated_at: now + i + k }) as QrRecord)),
+      ),
+    );
+    onProgress?.(Math.min(items.length, i + CHUNK), items.length);
+  }
+  return batchId;
 }
 
 // ---------- Stats & storage ----------

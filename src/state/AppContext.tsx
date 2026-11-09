@@ -125,7 +125,7 @@ export function AppProvider({ initial, children }: { initial: Record<string, unk
     const apply = () => {
       const eff = theme === "system" ? (mq.matches ? "dark" : "light") : theme;
       document.documentElement.dataset.theme = eff;
-      document.querySelector('meta[name="theme-color"]')?.setAttribute("content", eff === "dark" ? "#090a10" : "#f2f3f8");
+      document.querySelector('meta[name="theme-color"]')?.setAttribute("content", eff === "dark" ? "#090a10" : "#eef1f9");
     };
     apply();
     mq.addEventListener("change", apply);

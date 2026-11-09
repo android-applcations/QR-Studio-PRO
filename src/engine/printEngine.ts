@@ -1,6 +1,7 @@
 import type { DesignConfig } from "../core/types";
 import { renderQrSvg } from "./designEngine";
-import { blobToDataUrl, canvasToBlob, rasterize } from "./raster";
+import { blobToDataUrl } from "./raster";
+import { rasterizeBlob } from "./renderClient";
 
 export interface PrintItem {
   content: string;
@@ -29,8 +30,10 @@ export async function buildPrintHtml(items: PrintItem[], o: PrintOptions): Promi
   const imgs: string[] = [];
   for (const it of items) {
     const r = renderQrSvg(it.content, it.design, { logoHref: it.logoHref, transparent: false });
-    const canvas = await rasterize(r.svg, px, (px * r.height) / r.width, "#ffffff");
-    imgs.push(await blobToDataUrl(await canvasToBlob(canvas, "image/png")));
+    // A print sheet holds dozens of codes; doing that on the UI thread is a
+    // frozen sheet and a hot phone.
+    const blob = await rasterizeBlob(r.svg, px, Math.round((px * r.height) / r.width), "#ffffff", "image/png");
+    imgs.push(await blobToDataUrl(blob));
   }
   const cells = items
     .map((it, i) => {

@@ -1,4 +1,13 @@
-import type { Tx } from "./types";
+/**
+ * Reading a scanned link before anything acts on it.
+ *
+ * The rule this file follows: protection is silent. Nothing computed here is
+ * ever written on screen — no banners, no "warning:", no lecturing. The analysis
+ * decides what the app is willing to *do* with a link (open it at all, hand it
+ * to the app it claims to belong to) and then stays out of the way. A person who
+ * wants to check where a link goes can read the address, which is always shown
+ * in full.
+ */
 
 export interface LinkInfo {
   kind: "web" | "app" | "unsafe" | "none";
@@ -6,7 +15,14 @@ export interface LinkInfo {
   host: string;
   https: boolean;
   openable: boolean;
-  warnings: Tx[];
+  /**
+   * The address looks like it is pretending to be a service it is not: an
+   * unencrypted connection, punycode, a bare IP, a shortener, embedded
+   * credentials, or a borrowed brand name.
+   *
+   * Used to decide, never to announce.
+   */
+  suspicious: boolean;
 }
 
 const UNSAFE = ["javascript", "data", "vbscript", "file", "blob", "about", "view-source"];
@@ -17,7 +33,7 @@ const SHORTENERS = /^(bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|ow\.ly|cutt\.ly|
  * Names a fake login page likes to borrow.
  *
  * Short and generic words ("bank", "mtn") are deliberately absent — matching
- * those flags ordinary domains and the warning stops meaning anything.
+ * those flags ordinary domains and the signal stops meaning anything.
  */
 const BRANDS: Record<string, string[]> = {
   paypal: ["paypal.com", "paypal.me"],
@@ -63,9 +79,6 @@ const deLeet = (v: string) =>
  * (`paypal.com.login-verify.net` — the domain that actually receives you is the
  * one on the right), and a trusted name misspelled into the domain itself
  * (`paypa1.com`, `secure-paypal.com`).
- *
- * A warning, never a block: the point is to make the user look twice at the
- * address before opening it, not to decide for them.
  */
 export function impersonation(host: string): boolean {
   const labels = host.toLowerCase().split(".").filter(Boolean);
@@ -85,41 +98,50 @@ export function impersonation(host: string): boolean {
 /** Static analysis of scanned content: never executes or opens anything. */
 export function analyzeLink(content: string): LinkInfo {
   const s = content.trim();
-  const none: LinkInfo = { kind: "none", href: "", host: "", https: false, openable: false, warnings: [] };
+  const none: LinkInfo = { kind: "none", href: "", host: "", https: false, openable: false, suspicious: false };
   const m = /^([a-z][a-z0-9+.-]*):/i.exec(s);
   if (!m || /\s/.test(s.split(/[\n]/)[0].slice(0, m[0].length + 1))) return none;
   const scheme = m[1].toLowerCase();
-  if (UNSAFE.includes(scheme)) {
-    return { kind: "unsafe", href: s, host: "", https: false, openable: false, warnings: [["This content uses a dangerous link type and will not be opened.", "هذا المحتوى يستخدم نوع رابط خطير ولن يتم فتحه."]] };
-  }
+
+  // Schemes that can only ever hurt are simply not offered: no button, no
+  // explanation. The result panel shows the raw text and nothing more.
+  if (UNSAFE.includes(scheme)) return { kind: "unsafe", href: s, host: "", https: false, openable: false, suspicious: true };
+
   if (scheme === "http" || scheme === "https") {
     let u: URL;
     try {
       u = new URL(s);
     } catch {
-      return { ...none, kind: "unsafe", warnings: [["Malformed link", "رابط غير صحيح"]] };
+      return { ...none, kind: "unsafe", suspicious: true };
     }
-    const warnings: Tx[] = [];
     const host = u.hostname.toLowerCase();
-    if (scheme === "http") warnings.push(["The connection is not encrypted (http).", "الاتصال غير مشفّر (http)."]);
-    if (host.includes("xn--")) warnings.push(["The domain uses look-alike (punycode) characters.", "النطاق يستخدم أحرفاً مشابهة (Punycode) وقد يكون مضللاً."]);
-    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":")) warnings.push(["The link points to an IP address instead of a domain.", "الرابط يشير إلى عنوان IP بدلاً من نطاق."]);
-    if (SHORTENERS.test(host)) warnings.push(["Shortened link: the real destination is hidden.", "رابط مختصر: الوجهة الحقيقية مخفية."]);
-    if (u.username || u.password) warnings.push(["The link contains embedded credentials.", "الرابط يحتوي على بيانات دخول مضمّنة."]);
-    if (s.length > 400) warnings.push(["Very long link.", "رابط طويل جداً."]);
-    if (impersonation(host))
-      warnings.push([
-        "This address borrows the name of a well-known service but is not it. Check every character before opening.",
-        "هذا العنوان يستعير اسم خدمة معروفة ولكنه ليس لها. تحقّق من كل حرف قبل الفتح.",
-      ]);
-    return { kind: "web", href: u.href, host: u.host, https: scheme === "https", openable: true, warnings };
+    const suspicious =
+      scheme === "http" ||
+      host.includes("xn--") ||
+      /^\d{1,3}(\.\d{1,3}){3}$/.test(host) ||
+      host.includes(":") ||
+      SHORTENERS.test(host) ||
+      !!u.username ||
+      !!u.password ||
+      s.length > 400 ||
+      impersonation(host);
+    return { kind: "web", href: u.href, host: u.host, https: scheme === "https", openable: true, suspicious };
   }
+
+  // tel:, mailto:, sms:, geo:, crypto: — schemes the OS answers directly.
   if (SAFE_APP.includes(scheme) && scheme !== "wifi") {
-    return { kind: "app", href: s, host: scheme + ":", https: false, openable: true, warnings: [] };
+    return { kind: "app", href: s, host: scheme + ":", https: false, openable: true, suspicious: false };
   }
   if (scheme === "wifi") return none;
+
+  // Anything else is a scheme we do not know, so it only opens when it is
+  // written as a full URL — and never gets handed to a native app.
   return {
-    kind: "app", href: s, host: scheme + "://", https: false, openable: /^[a-z][a-z0-9+.-]*:\/\//i.test(s),
-    warnings: [["This link opens another app on your device.", "هذا الرابط يفتح تطبيقاً آخر على جهازك."]],
+    kind: "app",
+    href: s,
+    host: scheme + "://",
+    https: false,
+    openable: /^[a-z][a-z0-9+.-]*:\/\//i.test(s),
+    suspicious: true,
   };
 }

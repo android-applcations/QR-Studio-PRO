@@ -1,7 +1,8 @@
 import type { DesignConfig } from "../core/types";
 import { renderQrSvg } from "./designEngine";
-import { canvasToBlob, rasterize, MAX_CANVAS } from "./raster";
+import { MAX_CANVAS } from "./raster";
 import { buildPdf, mmToPt, PAPER, type PdfPage } from "./pdf";
+import { rasterizeBlob } from "./renderClient";
 
 export type ExportFormat = "png" | "jpg" | "svg" | "pdf";
 export type PaperKey = "a4" | "a5" | "letter" | "fit";
@@ -69,14 +70,15 @@ export async function renderToBlob(
   }
   const w = clampSize(opts.size);
   const h = (w * r.height) / r.width;
-  const canvas = await rasterize(r.svg, w, h, transparent ? null : "#ffffff");
-  return canvasToBlob(canvas, MIME[opts.format], opts.format === "jpg" ? opts.quality : undefined);
+  return rasterizeBlob(r.svg, Math.round(w), Math.round(h), transparent ? null : "#ffffff", MIME[opts.format], opts.format === "jpg" ? opts.quality : undefined);
 }
 
 async function jpegBytes(svg: string, px: number, ratio: number): Promise<{ bytes: Uint8Array; w: number; h: number }> {
-  const canvas = await rasterize(svg, px, px * ratio, "#ffffff");
-  const blob = await canvasToBlob(canvas, "image/jpeg", 0.97);
-  return { bytes: new Uint8Array(await blob.arrayBuffer()), w: canvas.width, h: canvas.height };
+  const h = Math.round(px * ratio);
+  // Off the UI thread where the worker can do it: a PDF page is rendered at
+  // 300 dpi, which is a lot of pixels to paint while the button is still down.
+  const blob = await rasterizeBlob(svg, px, h, "#ffffff", "image/jpeg", 0.97);
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), w: px, h };
 }
 
 /** Build one PDF page with a single centered QR. */

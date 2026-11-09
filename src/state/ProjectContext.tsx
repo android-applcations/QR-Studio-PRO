@@ -169,6 +169,18 @@ export function ProjectProvider({ initial, children }: { initial: Record<string,
   const ref = useRef(project);
   ref.current = project;
 
+  /**
+   * Serialises the silent autosave.
+   *
+   * Two overlapping saves of the same record is how a library row ends up
+   * holding a mix of two edits: both read the old row, both write back their
+   * own version, and the last writer wins regardless of which was newer. One
+   * save at a time, and a save that arrived while another was running is
+   * remembered so the newest edit is the one that lands.
+   */
+  const saving = useRef(false);
+  const resave = useRef(false);
+
   const save = useCallback(async (opts?: { silent?: boolean }) => {
     const p = ref.current;
     const ty = TYPE_BY_ID[p.typeId];
@@ -177,6 +189,13 @@ export function ProjectProvider({ initial, children }: { initial: Record<string,
       toast(["Complete the required fields first", "أكمل الحقول المطلوبة أولاً"], "err");
       return null;
     }
+    // A silent save that is already running means an autosave: queue this one
+    // behind it instead of running alongside.
+    if (opts?.silent && saving.current) {
+      resave.current = true;
+      return null;
+    }
+    saving.current = true;
     try {
       const snippet = b.content.replace(/\s+/g, " ").slice(0, 28);
       const name = p.name.trim() || `${t(ty.title)} · ${snippet}`;
@@ -191,6 +210,12 @@ export function ProjectProvider({ initial, children }: { initial: Record<string,
     } catch (e) {
       fail(e);
       return null;
+    } finally {
+      saving.current = false;
+      if (resave.current) {
+        resave.current = false;
+        void save({ silent: true });
+      }
     }
   }, [t, toast, fail, logActivity, bumpData, patchProject]);
 

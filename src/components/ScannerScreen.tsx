@@ -48,19 +48,21 @@ function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void 
     if (!link.openable) return;
     // Show the whole address, not just the host: the host is the part a fake
     // gets right, and the path is where the damage usually is.
+    // A plain preview of where the tap goes — the whole address, in reading
+    // order. No verdicts: the app judges the link quietly and lets the person
+    // look at it.
     const ok = await confirm({
       title: ["Open this link?", "فتح هذا الرابط؟"],
-      message: [
-        `You are about to open:\n${link.href}${link.warnings.length ? "\n\nWarning: " + link.warnings.map((w) => w[0]).join(" ") : ""}`,
-        `ستقوم بفتح:\n${link.href}${link.warnings.length ? "\n\nتحذير: " + link.warnings.map((w) => w[1]).join(" ") : ""}`,
-      ],
+      message: [`You are about to open:\n${link.href}`, `ستقوم بفتح:\n${link.href}`],
       confirmLabel: ["Open", "فتح"],
-      danger: link.warnings.length > 0,
     });
     if (!ok) return;
 
     // A link that belongs to an app opens there; otherwise the browser gets it.
-    const handoff = link.kind === "web" ? openInAppOrBrowser(link.href, appLinks) : openExternal(link.href);
+    // A link that looks like something it is not never gets handed to the app
+    // it claims to belong to — the browser is the safer place to meet it. Said
+    // nowhere, done anyway.
+    const handoff = link.kind === "web" ? openInAppOrBrowser(link.href, appLinks && !link.suspicious) : openExternal(link.href);
     if (handoff === "refused") {
       fail(new Error("link refused"));
       return;
@@ -133,13 +135,11 @@ function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void 
         </div>
         {link.kind === "web" && (
           <div className="flex items-center gap-2 rounded-xl border border-line bg-surface2/40 px-3 py-2 text-xs">
-            <span className={cn("rounded-md px-1.5 py-0.5 font-semibold", link.https ? "bg-ok/15 text-ok" : "bg-warn/15 text-warn")}>{link.https ? "HTTPS" : "HTTP"}</span>
+            <span className="shrink-0 rounded-md bg-surface2 px-1.5 py-0.5 font-semibold text-muted">{link.https ? "HTTPS" : "HTTP"}</span>
             <span className="min-w-0 truncate" dir="ltr">{link.host}</span>
           </div>
         )}
-        {link.kind === "unsafe" && <Notice level="error">{link.warnings.map((w) => t(w)).join(" ")}</Notice>}
-        {link.kind !== "unsafe" && link.warnings.map((w, i) => <Notice key={i} level="warn">{t(w)}</Notice>)}
-        <p className="text-[11px] text-muted">{t(["Links are never opened automatically.", "لا يتم فتح الروابط تلقائياً."])}</p>
+
       </div>
       <div className="grid shrink-0 grid-cols-4 gap-1.5 border-t border-line p-2.5">
         {isWifi && (
@@ -165,6 +165,8 @@ export default function ScannerScreen() {
   const sessionRef = useRef<CameraSession | null>(null);
   const session = (sessionRef.current ??= new CameraSession());
   const alive = useRef(true);
+  /** set when the app released the camera on its own, so it can take it back */
+  const autoStopped = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<Status>("starting");
   const [errKind, setErrKind] = useState<CameraErrorKind>("unknown");
@@ -173,6 +175,9 @@ export default function ScannerScreen() {
   const [zoom, setZoom] = useState(1);
   const [cams, setCams] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string>("");
+  /** read inside listeners that must not re-run the effect */
+  const deviceIdRef = useRef("");
+  deviceIdRef.current = deviceId;
   const [facing, setFacing] = useState<"environment" | "user">("environment");
   const [codes, setCodes] = useState<string[] | null>(null);
   const [busyImg, setBusyImg] = useState(false);
@@ -228,12 +233,21 @@ export default function ScannerScreen() {
     alive.current = true;
     void start();
     const s = sessionRef.current ?? session;
+    // Release only remembers that it was us, so coming back can pick the camera
+    // up again — a tap the user did not ask for must stay off.
     const release = () => {
       s.stop();
+      autoStopped.current = true;
       setStatus((st) => (st === "error" ? st : "stopped"));
     };
     const onVis = () => {
       if (document.hidden) release();
+      // Phones pocket the app and come back to it. Without this the scanner
+      // stays dead until somebody finds the button.
+      else if (autoStopped.current && !codesRef.current) {
+        autoStopped.current = false;
+        void start({ deviceId: deviceIdRef.current || undefined });
+      }
     };
     document.addEventListener("visibilitychange", onVis);
     // pagehide covers bfcache / tab close where visibilitychange may not fire
@@ -247,9 +261,14 @@ export default function ScannerScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A manual stop is a decision, not a pause: do not undo it.
+  useEffect(() => {
+    if (status === "live") autoStopped.current = false;
+  }, [status]);
+
   useEffect(() => { if (section !== "scan") session.stop(); }, [section]);
 
-  const stop = () => { session.stop(); setStatus("stopped"); setTorch(false); };
+  const stop = () => { autoStopped.current = false; session.stop(); setStatus("stopped"); setTorch(false); };
 
   const again = () => {
     setCodes(null);
