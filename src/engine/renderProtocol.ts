@@ -28,7 +28,41 @@ export interface RasterJob {
   quality?: number;
 }
 
-export type RenderJob = GenerateJob | RasterJob;
+/**
+ * One printed page: the design, the paper and how big it should be on paper.
+ * The page is rasterised and wrapped into a PDF entirely inside the worker.
+ */
+export interface PdfJob {
+  kind: "pdf";
+  svg: string;
+  /** height / width of the rendered code */
+  ratio: number;
+  paper: "fit" | "a4" | "a5" | "letter";
+  printMm: number;
+  title?: string;
+}
+
+/**
+ * A whole batch turned into an archive. Zipping hundreds of images costs more
+ * than rendering them, so it happens where the rendering happened.
+ */
+export interface ZipJob {
+  kind: "zip";
+  items: { name: string; content: string; svg: string; width: number; height: number }[];
+  format: "png" | "jpg" | "svg";
+  /** longest side, in pixels */
+  size: number;
+}
+
+/** The images for a print sheet, ready to be embedded in the HTML. */
+export interface SheetJob {
+  kind: "sheet";
+  items: { content: string; design: DesignConfig; logoHref: string | null }[];
+  /** longest side, in pixels */
+  px: number;
+}
+
+export type RenderJob = GenerateJob | RasterJob | PdfJob | ZipJob | SheetJob;
 
 export interface RenderItem {
   name: string;
@@ -43,8 +77,12 @@ export interface RenderOk {
   items?: RenderItem[];
   /** for `generate`: the line numbers that could not be rendered */
   failedLines?: number[];
-  /** for `raster` */
+  /** for `raster` and `pdf` */
   blob?: Blob;
+  /** for `zip`: the finished archive */
+  archive?: Blob;
+  /** for `sheet`: one PNG per item, in order */
+  images?: Blob[];
 }
 
 export interface RenderErr {

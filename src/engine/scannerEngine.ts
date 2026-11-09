@@ -176,6 +176,13 @@ const torchSupported = (c: ExtCaps) => !!c.torch || fillLightSupported(c);
 
 export class CameraSession {
   stream: MediaStream | null = null;
+  /**
+   * Called when the camera goes away without anybody asking — another app took
+   * it, the device was unplugged, the OS reclaimed it. The viewfinder showing a
+   * still frame while the code scanner silently waits is worse than saying
+   * nothing and simply stopping; the caller decides which.
+   */
+  onLost: (() => void) | null = null;
   private tick = 0;
   private running = false;
   private frame = 0;
@@ -215,7 +222,10 @@ export class CameraSession {
     // If the device loses the camera (unplugged, taken by another app) stop decoding.
     const track = this.stream.getVideoTracks()[0];
     if (track) {
-      this.onTrackEnded = () => this.pauseLoop();
+      this.onTrackEnded = () => {
+        this.pauseLoop();
+        this.onLost?.();
+      };
       track.addEventListener("ended", this.onTrackEnded);
     }
     return this.capabilities();

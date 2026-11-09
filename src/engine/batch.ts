@@ -1,10 +1,9 @@
-import JSZip from "jszip";
 import type { DesignConfig, Tx } from "../core/types";
 import { buildContent, TYPE_BY_ID } from "../core/qrTypes";
 import { renderQrSvg, QrCapacityError } from "./designEngine";
 import { canvasToBlob, rasterize } from "./raster";
-import { sanitizeFilename } from "./exportEngine";
-import { generateOffThread, rasterizeOffThread } from "./renderClient";
+import { sanitizeFilename } from "./naming";
+import { buildZipOffThread, generateOffThread, rasterizeOffThread } from "./renderClient";
 
 export type BatchKind = "text" | "url" | "phone" | "email";
 const KIND_FIELD: Record<BatchKind, string> = { text: "text", url: "url", phone: "phone", email: "to" };
@@ -180,12 +179,23 @@ export async function generateBatch(
 
 export type ZipFormat = "png" | "jpg" | "svg";
 
+/**
+ * Archive a batch.
+ *
+ * Compressing hundreds of images costs more CPU than rendering them, so the
+ * whole job — rasterise, name, compress — is handed to the worker when there is
+ * one. JSZip is then only loaded on the main thread by the fallback, which is
+ * why it is imported dynamically here.
+ */
 export async function buildZip(
   items: GeneratedItem[],
   format: ZipFormat,
   size: number,
   onProgress: (done: number, total: number) => void,
 ): Promise<Blob> {
+  const off = await buildZipOffThread(items.map((it) => ({ name: it.name, content: it.content, svg: it.svg, width: it.width, height: it.height })), format, size, onProgress);
+  if (off) return off;
+  const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   const used = new Map<string, number>();
   const manifest = ["file,name,content"];

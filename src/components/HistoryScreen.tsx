@@ -5,7 +5,7 @@ import { TYPE_BY_ID } from "../core/qrTypes";
 import { T, formatDate } from "../core/i18n";
 import { clearHistory, deleteHistory, getStats, listHistory, restoreHistory, type Stats } from "../db/db";
 import { useApp } from "../state/AppContext";
-import { useProject } from "../state/ProjectContext";
+import { useProjectActions } from "../state/ProjectContext";
 import { useAsyncList } from "../state/useData";
 import { copyText } from "../engine/exportEngine";
 import { cn } from "../utils/cn";
@@ -50,7 +50,7 @@ type DateF = "all" | "today" | "week" | "month";
 
 export default function HistoryScreen() {
   const { t, dataVersion, bumpData, toast, fail, confirm, go, saveHistory } = useApp();
-  const { loadRaw } = useProject();
+  const { loadRaw } = useProjectActions();
   const { data, loading } = useAsyncList(listHistory, dataVersion);
   const [stats, setStats] = useState<Stats | null>(null);
   const [q, setQ] = useState("");

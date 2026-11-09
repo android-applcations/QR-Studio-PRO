@@ -65,7 +65,28 @@ async function toPixels(blob: Blob, w: number, h: number): Promise<Uint8ClampedA
  * done in the render worker whenever the browser allows it — only the decode
  * itself stays here, and it reads pixels rather than producing them.
  */
-export async function verifyDesign(content: string, design: DesignConfig, logoHref: string | null): Promise<VerifyResult> {
+/**
+ * One answer to the same question.
+ *
+ * Two parts of the editor ask "can a scanner read this?" while the same design
+ * is on screen. Decoding is the most expensive thing on the screen, so the last
+ * question is remembered: identical inputs share one answer instead of paying
+ * for the same pixels twice.
+ */
+let last: { key: string; promise: Promise<VerifyResult> } | null = null;
+
+export function verifyDesign(content: string, design: DesignConfig, logoHref: string | null): Promise<VerifyResult> {
+  const key = `${content}\u0000${JSON.stringify(design)}\u0000${logoHref ?? ""}`;
+  if (last?.key === key) return last.promise;
+  const promise = runVerify(content, design, logoHref).catch((e) => {
+    if (last?.promise === promise) last = null;
+    throw e;
+  });
+  last = { key, promise };
+  return promise;
+}
+
+async function runVerify(content: string, design: DesignConfig, logoHref: string | null): Promise<VerifyResult> {
   const r = renderQrSvg(content, design, { logoHref, frame: false, transparent: false });
   for (const ppm of SCALES) {
     const px = Math.max(120, Math.round(r.modules * ppm));

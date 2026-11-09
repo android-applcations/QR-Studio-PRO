@@ -11,6 +11,7 @@ import type {
 } from "../core/types";
 import { DEFAULT_DESIGN, sanitizeDesign } from "../core/designDefaults";
 import { blobToDataUrl, dataUrlToBlob } from "../engine/raster";
+import { holdsSecret, open as openSeal, openValues, seal, sealValues } from "../core/vault";
 
 export const DB_VERSION = 2;
 export const BACKUP_FORMAT = 1;
@@ -125,21 +126,47 @@ export const putSetting = (key: string, value: unknown) => track(db.settings.put
 // ---------- QR codes ----------
 const designKey = (r: Pick<QrRecord, "design_config">) => JSON.stringify(r.design_config);
 
+/**
+ * Seal the secret parts of a record before it is written.
+ *
+ * The content of a Wi-Fi code is its password; the form values hold the same
+ * password in a field called `password`. Both are encrypted here, at the very
+ * edge of the database, so nothing above this line has to know.
+ */
+async function sealRecord<T extends { content?: string; type?: string; form_values?: Record<string, string> }>(r: T): Promise<T> {
+  const sensitive = holdsSecret(r.type, r.content);
+  const content = r.content != null && sensitive ? await seal(r.content) : r.content;
+  const form_values = r.form_values ? await sealValues(r.form_values, sensitive) : r.form_values;
+  return { ...r, ...(content !== undefined ? { content } : {}), ...(form_values !== undefined ? { form_values } : {}) };
+}
+
+/** The other half: hand back plain strings, sealed or not. */
+async function openRecord<T extends { content?: string; form_values?: Record<string, string> }>(r: T): Promise<T> {
+  if (!r) return r;
+  const content = typeof r.content === "string" ? await openSeal(r.content) : r.content;
+  const form_values = r.form_values ? await openValues(r.form_values) : r.form_values;
+  return { ...r, ...(content !== undefined ? { content } : {}), ...(form_values !== undefined ? { form_values } : {}) };
+}
+
 export async function saveQr(input: Omit<QrRecord, "id" | "uid" | "created_at" | "updated_at" | "favorite" | "category" | "description"> & Partial<QrRecord>): Promise<QrRecord> {
+  // Sealed here rather than at the bottom: the duplicate check below compares
+  // content, and sealing is deterministic, so a code saved twice still looks
+  // like the same code.
+  const incoming = await sealRecord(input);
   return track(db.transaction("rw", db.qr_codes, async () => {
     const now = Date.now();
-    if (input.id != null) {
-      const cur = await db.qr_codes.get(input.id);
+    if (incoming.id != null) {
+      const cur = await db.qr_codes.get(incoming.id);
       if (cur) {
-        const next: QrRecord = { ...cur, ...input, id: cur.id, uid: cur.uid, created_at: cur.created_at, updated_at: now } as QrRecord;
+        const next: QrRecord = { ...cur, ...incoming, id: cur.id, uid: cur.uid, created_at: cur.created_at, updated_at: now } as QrRecord;
         await db.qr_codes.put(next);
         return next;
       }
     }
     // prevent unintended duplicates: identical content + type + design
-    const same = await db.qr_codes.where("type").equals(input.type).filter((r) => r.content === input.content && designKey(r) === designKey(input as QrRecord)).first();
-    if (same && !input.batchId) {
-      const next = { ...same, name: input.name || same.name, form_values: input.form_values, updated_at: now };
+    const same = await db.qr_codes.where("type").equals(incoming.type).filter((r) => r.content === incoming.content && designKey(r) === designKey(incoming as QrRecord)).first();
+    if (same && !incoming.batchId) {
+      const next = { ...same, name: incoming.name || same.name, form_values: incoming.form_values, updated_at: now };
       await db.qr_codes.put(next);
       return next;
     }
@@ -150,7 +177,7 @@ export async function saveQr(input: Omit<QrRecord, "id" | "uid" | "created_at" |
       category: "",
       created_at: now,
       updated_at: now,
-      ...input,
+      ...incoming,
     } as QrRecord;
     delete rec.id;
     rec.id = await db.qr_codes.add(rec);
@@ -158,8 +185,11 @@ export async function saveQr(input: Omit<QrRecord, "id" | "uid" | "created_at" |
   }));
 }
 
-export const listQr = () => db.qr_codes.toArray();
-export const getQr = (id: number) => db.qr_codes.get(id);
+export const listQr = async (): Promise<QrRecord[]> => Promise.all((await db.qr_codes.toArray()).map((r) => openRecord(r)));
+export const getQr = async (id: number): Promise<QrRecord | undefined> => {
+  const r = await db.qr_codes.get(id);
+  return r ? openRecord(r) : undefined;
+};
 export const deleteQr = (ids: number[]) => track(db.qr_codes.bulkDelete(ids));
 export const restoreQr = (recs: QrRecord[]) => track(db.qr_codes.bulkPut(recs));
 export const patchQr = (id: number, patch: Partial<QrRecord>) => track(db.qr_codes.update(id, { ...patch, updated_at: Date.now() }));
@@ -170,6 +200,8 @@ export const patchManyQr = (ids: number[], patch: Partial<QrRecord>) =>
   }));
 
 export async function duplicateQr(id: number, suffix: string): Promise<QrRecord | null> {
+  // Copied as stored: the sealed values are already sealed with this device's
+  // key, so there is nothing to re-do.
   const cur = await db.qr_codes.get(id);
   if (!cur) return null;
   const now = Date.now();
@@ -180,7 +212,10 @@ export async function duplicateQr(id: number, suffix: string): Promise<QrRecord 
 }
 
 // ---------- History ----------
-export async function addHistory(rec: Omit<HistoryRecord, "id">): Promise<void> {
+export async function addHistory(input: Omit<HistoryRecord, "id">): Promise<void> {
+  // A scan of a Wi-Fi code is a scan of somebody's password, and a save writes
+  // the code it built. Both reach the history, so both are sealed first.
+  const rec = { ...input, content: holdsSecret(input.type, input.content) ? await seal(input.content) : input.content };
   await track(db.transaction("rw", db.scan_history, async () => {
     const last = await db.scan_history.orderBy("scanned_at").last();
     if (last && last.content === rec.content && last.action === rec.action && rec.scanned_at - last.scanned_at < 4000) return;
@@ -192,7 +227,8 @@ export async function addHistory(rec: Omit<HistoryRecord, "id">): Promise<void> 
     }
   }));
 }
-export const listHistory = () => db.scan_history.orderBy("scanned_at").reverse().toArray();
+export const listHistory = async (): Promise<HistoryRecord[]> =>
+  Promise.all((await db.scan_history.orderBy("scanned_at").reverse().toArray()).map((h) => openRecord(h)));
 export const deleteHistory = (ids: number[]) => track(db.scan_history.bulkDelete(ids));
 export const clearHistory = () => track(db.scan_history.clear());
 export const restoreHistory = (recs: HistoryRecord[]) => track(db.scan_history.bulkPut(recs));
@@ -263,9 +299,13 @@ export async function saveBatch(
   const CHUNK = 250;
   for (let i = 0; i < items.length; i += CHUNK) {
     const slice = items.slice(i, i + CHUNK);
+    // A batch is usually links or phone numbers, but nothing stops somebody
+    // pasting a column of Wi-Fi codes, so each row is checked. Only the rows
+    // that hold a secret pay for the encryption.
+    const sealed = await Promise.all(slice.map((it) => sealRecord(it as QrRecord)));
     await track(
       db.transaction("rw", db.qr_codes, () =>
-        db.qr_codes.bulkAdd(slice.map((it, k) => ({ ...it, uid: uid(), batchId, created_at: now + i + k, updated_at: now + i + k }) as QrRecord)),
+        db.qr_codes.bulkAdd(sealed.map((it, k) => ({ ...it, uid: uid(), batchId, created_at: now + i + k, updated_at: now + i + k }) as QrRecord)),
       ),
     );
     onProgress?.(Math.min(items.length, i + CHUNK), items.length);
@@ -402,8 +442,17 @@ interface BackupFile {
   };
 }
 
+/**
+ * Write a backup file.
+ *
+ * The records are opened on the way out. A backup is meant to travel — to
+ * another device, another browser, another year — and a file full of ciphertext
+ * tied to one browser's key would quietly stop being a backup the moment it
+ * left. The database is where secrets are sealed; the file the user carries is
+ * theirs to keep safe.
+ */
 export async function exportBackup(): Promise<Blob> {
-  const [qr_codes, scan_history, templates, categories, settings, qr_batches, assets] = await Promise.all([
+  const [storedCodes, storedHistory, templates, categories, settings, qr_batches, assets] = await Promise.all([
     db.qr_codes.toArray(),
     db.scan_history.toArray(),
     db.templates.toArray(),
@@ -414,6 +463,8 @@ export async function exportBackup(): Promise<Blob> {
   ]);
   const encAssets = [];
   for (const a of assets) encAssets.push({ id: a.id as number, created_at: a.created_at, dataUrl: await blobToDataUrl(a.blob) });
+  const qr_codes = await Promise.all(storedCodes.map((r) => openRecord(r)));
+  const scan_history = await Promise.all(storedHistory.map((h) => openRecord(h)));
   const file: BackupFile = {
     app: "QR Studio Pro",
     format: BACKUP_FORMAT,
@@ -523,15 +574,20 @@ export async function importBackup(p: ParsedBackup, mode: "merge" | "replace"): 
   const assetBlobs = new Map<number, Blob>();
   for (const a of d.assets) assetBlobs.set(a.id, await dataUrlToBlob(a.dataUrl));
 
+  // Coming in, every secret is sealed with this device's key again: a backup
+  // file is plain text, and the database is not.
+  const codes = await Promise.all(d.qr_codes.map((r) => sealRecord(r)));
+  const history = await Promise.all(d.scan_history.map((h) => (holdsSecret(h.type, h.content) ? sealRecord(h) : h)));
+
   await track(db.transaction("rw", db.tables, async () => {
     if (mode === "replace") {
       for (const t of db.tables) if (t.name !== "settings") await t.clear();
       await db.assets.bulkAdd([...assetBlobs.entries()].map(([id, blob]) => ({ id, blob, created_at: Date.now() })));
       await db.categories.bulkAdd(d.categories as CategoryRecord[]);
       await db.qr_batches.bulkAdd(d.qr_batches as BatchRecord[]);
-      await db.qr_codes.bulkAdd(d.qr_codes.map((r) => ({ ...r })));
+      await db.qr_codes.bulkAdd(codes.map((r) => ({ ...r })));
       await db.templates.bulkAdd(d.templates.map((r) => ({ ...r })));
-      await db.scan_history.bulkAdd(d.scan_history.map((r) => ({ ...r })));
+      await db.scan_history.bulkAdd(history.map((r) => ({ ...r })));
       for (const s of d.settings) await db.settings.put(s);
       return;
     }
@@ -548,7 +604,7 @@ export async function importBackup(p: ParsedBackup, mode: "merge" | "replace"): 
       if (oldId != null) batchMap.set(oldId, newId);
     }
     const existingUids = new Set((await db.qr_codes.toArray()).map((r) => r.uid));
-    for (const r of d.qr_codes) {
+    for (const r of codes) {
       if (existingUids.has(r.uid)) continue;
       const nr = { ...r, design_config: remap(r.design_config), batchId: r.batchId != null ? (batchMap.get(r.batchId) ?? null) : null };
       delete nr.id;
@@ -569,7 +625,7 @@ export async function importBackup(p: ParsedBackup, mode: "merge" | "replace"): 
       await db.categories.add(nc);
     }
     const seen = new Set((await db.scan_history.toArray()).map((h) => `${h.action}|${h.scanned_at}|${h.content}`));
-    for (const h of d.scan_history) {
+    for (const h of history) {
       if (seen.has(`${h.action}|${h.scanned_at}|${h.content}`)) continue;
       const nh = { ...h };
       delete nh.id;

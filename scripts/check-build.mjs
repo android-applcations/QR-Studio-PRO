@@ -75,6 +75,7 @@ if (sw) {
   if (!/offline\.html/.test(sw)) notes.push("note: sw.js does not reference offline.html");
 
   // Extract the injected precache manifest.
+  const swSource = sw;
   const start = sw.indexOf("[{");
   let entries = [];
   const m = sw.slice(sw.indexOf('[{"revision"') >= 0 ? sw.indexOf('[{"revision"') : start).match(/\[[\s\S]*?\]\s*(?=[,;)])/);
@@ -97,8 +98,17 @@ if (sw) {
     ok(`precache manifest: ${urls.size} entries`);
 
     const distFiles = walk(DIST).map((f) => relative(DIST, f).split("\\").join("/"));
-    const notCached = distFiles.filter((f) => f !== "sw.js" && !urls.has(f));
+    // Brand marks are the one deliberate exception: they are cached the first
+    // time they are requested, not at install (see the /brands/ route in
+    // src/sw.ts). Everything else that ships must be precached.
+    const deferred = distFiles.filter((f) => f.startsWith("brands/"));
+    const notCached = distFiles.filter((f) => f !== "sw.js" && !urls.has(f) && !deferred.includes(f));
     if (notCached.length) fail(`files in dist that are NOT precached: ${notCached.join(", ")}`);
+    if (deferred.length) {
+      if (urls.has(deferred[0])) fail(`"${deferred[0]}" is precached — brand marks must be cached on first use, not at install`);
+      else if (!/\/brands\//.test(swSource)) fail(`${deferred.length} brand marks are not precached and sw.js has no /brands/ route to cache them on demand`);
+      else ok(`brand marks are cached on first use, not at install (${deferred.length} files kept out of the precache)`);
+    }
 
     const stale = [...urls].filter((u) => !distFiles.includes(u));
     if (stale.length) notes.push(`note: precache entries with no dist file (harmless): ${stale.join(", ")}`);

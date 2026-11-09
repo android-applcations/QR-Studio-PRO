@@ -138,6 +138,36 @@ export async function rasterizeBlob(
   return canvasToBlob(await rasterize(svg, w, h, bg), mime, quality);
 }
 
+/** Build a one-page PDF off the UI thread. `null` when that is not possible. */
+export function buildPdfOffThread(
+  svg: string,
+  ratio: number,
+  paper: "fit" | "a4" | "a5" | "letter",
+  printMm: number,
+  title?: string,
+): Promise<Blob | null> {
+  return call({ kind: "pdf", svg, ratio, paper, printMm, title }, (ok) => ok.blob ?? null);
+}
+
+/** Zip a whole batch off the UI thread. `null` when that is not possible. */
+export function buildZipOffThread(
+  items: { name: string; content: string; svg: string; width: number; height: number }[],
+  format: "png" | "jpg" | "svg",
+  size: number,
+  onProgress?: (done: number, total: number) => void,
+): Promise<Blob | null> {
+  return call({ kind: "zip", items, format, size }, (ok) => ok.archive ?? null, onProgress);
+}
+
+/** Rasterise a print sheet off the UI thread. `null` when that is not possible. */
+export function buildSheetOffThread(
+  items: { content: string; design: DesignConfig; logoHref: string | null }[],
+  px: number,
+  onProgress?: (done: number, total: number) => void,
+): Promise<Blob[] | null> {
+  return call({ kind: "sheet", items, px }, (ok) => ok.images ?? null, onProgress);
+}
+
 /** Render a whole batch off the UI thread. `null` when that is not possible. */
 export function generateOffThread(
   rows: { line: number; name: string; content: string }[],

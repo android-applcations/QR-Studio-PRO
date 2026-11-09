@@ -1,19 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DesignConfig, FormValues, Project, QrRecord, QrTypeDef } from "../core/types";
 import { builtinLogoHref, DEFAULT_DESIGN, sanitizeDesign } from "../core/designDefaults";
-import { buildContent, defaultValues, TYPE_BY_ID, type BuildResult } from "../core/qrTypes";
+import { buildContent, defaultValues, redactForLog, TYPE_BY_ID, type BuildResult } from "../core/qrTypes";
 import { getLogoDataUrl, primeLogoCache, putSetting, saveAsset, saveQr } from "../db/db";
 import { blobToDataUrl, prepareLogoBlob } from "../engine/raster";
 import { useApp } from "./AppContext";
+import { createStore, useSlice, type Store } from "./store";
 
 export type CreateStep = "pick" | "form" | "result" | "batch";
 
-interface Ctx {
-  project: Project;
-  type: QrTypeDef;
-  build: BuildResult;
-  logoHref: string | null;
-  step: CreateStep;
+/** Everything the app can *do* to a project. Never changes identity. */
+interface Actions {
   setStep: (s: CreateStep) => void;
   selectType: (id: string) => void;
   setValues: (v: FormValues) => void;
@@ -23,8 +20,6 @@ interface Ctx {
   resetDesign: () => void;
   undo: () => void;
   redo: () => void;
-  canUndo: boolean;
-  canRedo: boolean;
   loadRecord: (r: QrRecord) => void;
   loadRaw: (content: string, typeId: string) => void;
   newProject: () => void;
@@ -33,12 +28,75 @@ interface Ctx {
   removeLogo: () => void;
 }
 
-const PCtx = createContext<Ctx | null>(null);
-export const useProject = (): Ctx => {
-  const c = useContext(PCtx);
+/** Everything the app can *read* about a project. */
+interface Data {
+  project: Project;
+  type: QrTypeDef;
+  build: BuildResult;
+  logoHref: string | null;
+  step: CreateStep;
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
+type Ctx = Data & Actions;
+
+/**
+ * Actions and data live in two contexts on purpose.
+ *
+ * The actions never change, so a screen that only needs to *do* something —
+ * open a saved code, hand a scan to the editor — never re-renders when the
+ * project does. That is the whole point: with one context, moving a colour
+ * slider rebuilt the library, the history and the scanner too, because each of
+ * them had asked for `loadRecord` or `loadRaw`.
+ */
+const ActionsCtx = createContext<Actions | null>(null);
+const DataCtx = createContext<Data | null>(null);
+const StoreCtx = createContext<Store<S> | null>(null);
+/**
+ * The logo on its own. It is resolved asynchronously and has nothing to do
+ * with the project's fields, so it must not be the reason a screen that shows
+ * it rebuilds when a colour changes.
+ */
+const LogoCtx = createContext<string | null>(null);
+
+export const useProjectLogo = (): string | null => useContext(LogoCtx);
+
+/**
+ * Read one slice of the project, and re-render only when it moves.
+ *
+ * `useProject()` is the convenient whole-thing hook; this is the one an editor
+ * control should use, because a slider that reads `logoSize` has no business
+ * rebuilding itself when somebody changes a colour.
+ */
+export function useProjectSlice<R>(selector: (s: S) => R): R {
+  const store = useContext(StoreCtx);
+  if (!store) throw new Error("ProjectProvider missing");
+  return useSlice(store, selector);
+}
+
+/**
+ * The store itself, for reading without subscribing.
+ *
+ * An event handler often needs to know the rest of the design — "when the dot
+ * colour changes, move the frame colour with it". Reading it here means the
+ * handler does not have to subscribe to it, so the component that owns the
+ * handler is not rebuilt every time that other field moves.
+ */
+export function useProjectStore(): Store<S> {
+  const store = useContext(StoreCtx);
+  if (!store) throw new Error("ProjectProvider missing");
+  return store;
+}
+
+export const useProjectActions = (): Actions => {
+  const c = useContext(ActionsCtx);
   if (!c) throw new Error("ProjectProvider missing");
   return c;
 };
+
+/** Read the project data. Re-renders when any of it changes. */
+export const useProject = (): Ctx => ({ ...useContext(DataCtx)!, ...useProjectActions() });
 
 function restore(raw: unknown): Project | null {
   if (!raw || typeof raw !== "object") return null;
@@ -71,7 +129,18 @@ function withDesign(s: S, next: DesignConfig, key: string | undefined, now: numb
 export function ProjectProvider({ initial, children }: { initial: Record<string, unknown>; children: ReactNode }) {
   const { t, toast, fail, logActivity, bumpData, autoSave } = useApp();
   const restored = useMemo(() => restore(initial.lastProject), [initial.lastProject]);
-  const [s, setS] = useState<S>(() => ({ project: restored ?? blank(), past: [], future: [], lastKey: "", lastAt: 0 }));
+  // The project lives in a store rather than in `useState`, so a component can
+  // ask for one field of the design instead of the whole thing. See `store.ts`.
+  const storeRef = useRef<Store<S> | null>(null);
+  storeRef.current ??= createStore<S>({ project: restored ?? blank(), past: [], future: [], lastKey: "", lastAt: 0 });
+  const store = storeRef.current;
+  // `setS` writes to the store, never to React state: the store is the single
+  // source of truth, and React is told about it through the subscription
+  // below. Without this indirection the two would drift apart the moment
+  // anything but the provider read the state.
+  const setS = store.set;
+  const [s, setState] = useState<S>(store.get());
+  useEffect(() => store.subscribe(() => setState(store.get())), [store]);
   const [step, setStep] = useState<CreateStep>(() => (restored && Object.values(restored.values).some((v) => v.trim()) ? "form" : "pick"));
   const [logoHref, setLogoHref] = useState<string | null>(null);
   const project = s.project;
@@ -197,7 +266,10 @@ export function ProjectProvider({ initial, children }: { initial: Record<string,
     }
     saving.current = true;
     try {
-      const snippet = b.content.replace(/\s+/g, " ").slice(0, 28);
+      // Redacted before it is used as a name: the first 28 characters of a
+      // Wi-Fi code include the beginning of its password, and a name is stored
+      // in the clear.
+      const snippet = redactForLog(p.typeId, b.content).replace(/\s+/g, " ").slice(0, 28);
       const name = p.name.trim() || `${t(ty.title)} · ${snippet}`;
       const rec = await saveQr({ id: p.savedId ?? undefined, name, content: b.content, type: p.typeId, form_values: p.values, design_config: p.design });
       patchProject((cur) => (cur.typeId === p.typeId ? { ...cur, savedId: rec.id ?? null, name: cur.name || name } : cur));
@@ -248,10 +320,27 @@ export function ProjectProvider({ initial, children }: { initial: Record<string,
 
   const removeLogo = useCallback(() => setDesign({ logoId: null }), [setDesign]);
 
-  const value = useMemo<Ctx>(() => ({
-    project, type, build, logoHref, step, setStep, selectType, setValues, setName, setDesign, replaceDesign, resetDesign,
-    undo, redo, canUndo: s.past.length > 0, canRedo: s.future.length > 0, loadRecord, loadRaw, newProject, save, uploadLogo, removeLogo,
-  }), [project, type, build, logoHref, step, selectType, setValues, setName, setDesign, replaceDesign, resetDesign, undo, redo, s.past.length, s.future.length, loadRecord, loadRaw, newProject, save, uploadLogo, removeLogo]);
+  // The actions object is built once. Every callback inside it reads the
+  // project through a ref rather than closing over it, so none of them needs to
+  // be recreated when the project changes — which is what lets the object stay
+  // the same for the lifetime of the app.
+  const actions = useMemo<Actions>(
+    () => ({ setStep, selectType, setValues, setName, setDesign, replaceDesign, resetDesign, undo, redo, loadRecord, loadRaw, newProject, save, uploadLogo, removeLogo }),
+    [selectType, setValues, setName, setDesign, replaceDesign, resetDesign, undo, redo, loadRecord, loadRaw, newProject, save, uploadLogo, removeLogo],
+  );
 
-  return <PCtx.Provider value={value}>{children}</PCtx.Provider>;
+  const data = useMemo<Data>(
+    () => ({ project, type, build, logoHref, step, canUndo: s.past.length > 0, canRedo: s.future.length > 0 }),
+    [project, type, build, logoHref, step, s.past.length, s.future.length],
+  );
+
+  return (
+    <ActionsCtx.Provider value={actions}>
+      <StoreCtx.Provider value={store}>
+        <LogoCtx.Provider value={logoHref}>
+          <DataCtx.Provider value={data}>{children}</DataCtx.Provider>
+        </LogoCtx.Provider>
+      </StoreCtx.Provider>
+    </ActionsCtx.Provider>
+  );
 }

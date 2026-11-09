@@ -20,7 +20,9 @@
     "test:payment": "node scripts/payment-test.mjs",
     "test:handles": "node scripts/handle-test.mjs",
     "test:polish": "node scripts/polish-test.mjs",
-    "test:security": "node scripts/security-test.mjs"
+    "test:security": "node scripts/security-test.mjs",
+    "test:perf": "node scripts/perf-test.mjs",
+    "test:vault": "node scripts/vault-test.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",

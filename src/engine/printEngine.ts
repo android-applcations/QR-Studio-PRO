@@ -1,7 +1,7 @@
 import type { DesignConfig } from "../core/types";
 import { renderQrSvg } from "./designEngine";
 import { blobToDataUrl } from "./raster";
-import { rasterizeBlob } from "./renderClient";
+import { buildSheetOffThread, rasterizeBlob } from "./renderClient";
 
 export interface PrintItem {
   content: string;
@@ -27,13 +27,21 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 /** Build a standalone printable document (images embedded as PNG data URLs). */
 export async function buildPrintHtml(items: PrintItem[], o: PrintOptions): Promise<string> {
   const px = Math.max(500, Math.min(1600, Math.round((o.sizeMm / 25.4) * 240)));
+  // A sheet holds dozens of codes. Painting all of them belongs in the worker;
+  // turning the results into data URLs is trivial and stays here, so the HTML
+  // template itself is written once.
+  const shots = await buildSheetOffThread(
+    items.map((it) => ({ content: it.content, design: it.design, logoHref: it.logoHref })),
+    px,
+  );
   const imgs: string[] = [];
-  for (const it of items) {
-    const r = renderQrSvg(it.content, it.design, { logoHref: it.logoHref, transparent: false });
-    // A print sheet holds dozens of codes; doing that on the UI thread is a
-    // frozen sheet and a hot phone.
-    const blob = await rasterizeBlob(r.svg, px, Math.round((px * r.height) / r.width), "#ffffff", "image/png");
-    imgs.push(await blobToDataUrl(blob));
+  if (shots) {
+    for (const b of shots) imgs.push(await blobToDataUrl(b));
+  } else {
+    for (const it of items) {
+      const r = renderQrSvg(it.content, it.design, { logoHref: it.logoHref, transparent: false });
+      imgs.push(await blobToDataUrl(await rasterizeBlob(r.svg, px, Math.round((px * r.height) / r.width), "#ffffff", "image/png")));
+    }
   }
   const cells = items
     .map((it, i) => {
