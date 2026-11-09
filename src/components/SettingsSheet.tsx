@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Database, Download, FileUp, HardDrive, History, Info, Languages, Moon, Palette, RefreshCw, ScrollText, ShieldCheck, Sun, Trash2, Monitor, Volume2, Wifi } from "lucide-react";
+import { ChevronDown, Database, Download, FileUp, HardDrive, History, Info, Languages, Moon, Palette, RefreshCw, ScrollText, ShieldCheck, Sun, Trash2, Monitor, Volume2, Wifi, ExternalLink } from "lucide-react";
 import { PRIVACY, T, TERMS, formatBytes, formatDate, pick, type LegalDoc } from "../core/i18n";
 import type { Lang, ThemeMode } from "../core/types";
 import { DB_VERSION, clearHistory, exportBackup, importBackup, parseBackup, requestPersistence, storageEstimate, wipeAll, type ParsedBackup } from "../db/db";
@@ -50,7 +50,7 @@ function Legal({ doc, lang }: { doc: LegalDoc; lang: Lang }) {
 }
 
 export function SettingsSheet() {
-  const { t, lang, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, sounds, setSounds, settingsOpen, setSettingsOpen, toast, fail, confirm, bumpData, dataVersion } = useApp();
+  const { t, lang, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, sounds, setSounds, appLinks, setAppLinks, settingsOpen, setSettingsOpen, toast, fail, confirm, bumpData, dataVersion } = useApp();
   const { needRefresh, installed, swActive, updateNow, checkForUpdates } = usePwa();
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
   const [parsed, setParsed] = useState<ParsedBackup | null>(null);
@@ -167,6 +167,20 @@ export function SettingsSheet() {
                 "Light taps for taps, navigation and confirmations. Clicks only — no music, no instruments, no melodies.",
                 "نقرات خفيفة عند الضغط والتنقل والتأكيد. نقرات فقط — بدون موسيقى أو آلات أو ألحان.",
               ])}
+            />
+          </Group>
+
+          <Group icon={<ExternalLink size={17} />} title={t(["Opening links", "فتح الروابط"])}>
+            <Toggle
+              checked={appLinks}
+              onChange={setAppLinks}
+              label={t(["Open in the app when it is installed", "افتح في التطبيق إن كان مثبتاً"])}
+              desc={t(
+                [
+                  "A scanned YouTube, Instagram or Telegram link opens in its own app instead of the browser. Turn this off if your device ever shows \"no app can open this link\" — links then always open safely in the browser.",
+                  "رابط يوتيوب أو إنستغرام أو تليجرام يُفتح في تطبيقه بدل المتصفح. أوقف هذا الخيار إذا ظهرت لك رسالة «لا يوجد تطبيق يمكنه فتح هذا الرابط» — عندها تُفتح الروابط دائماً في المتصفح بأمان.",
+                ],
+              )}
             />
           </Group>
 

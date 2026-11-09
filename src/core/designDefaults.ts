@@ -31,11 +31,63 @@ export interface BuiltinTemplate {
   id: string;
   name: Tx;
   design: Partial<DesignConfig>;
+  /** switch the project to this QR type when the template is applied */
+  typeId?: string;
+}
+
+/**
+ * Marks that ship with the app, so a template can carry one without the user
+ * uploading anything.
+ *
+ * A design's `logoId` points at a logo the user stored in IndexedDB, so a
+ * built-in mark needs an id that can never collide with one: negative ids are
+ * never handed out by the store, and `builtinLogoHref` resolves them to the file.
+ */
+export const BUILTIN_LOGOS: Record<number, string> = {
+  [-1]: "/brands/shamcash.png",
+};
+
+/** The official Sham Cash mark. */
+export const SHAMCASH_LOGO_ID = -1;
+
+/** The file behind a built-in mark, or null when this is a stored logo. */
+export function builtinLogoHref(logoId: number | null | undefined): string | null {
+  return typeof logoId === "number" && logoId < 0 ? BUILTIN_LOGOS[logoId] ?? null : null;
 }
 
 const g = (from: string, to: string, angle = 45) => ({ enabled: true, type: "linear" as const, from, to, angle });
 
 export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
+  {
+    /*
+     * Sham Cash — built from the official material, not guessed:
+     *   · the colours are the ones in the official mark itself (deep blue
+     *     #374EAC → teal #4C9DA4);
+     *   · "سهولة وأمان" is the wallet's own slogan, used on every official
+     *     channel, so it is the caption rather than an English invention;
+     *   · the QR holds only the wallet code, so the frame is where the name
+     *     lives — the way the app's own "Receive" screen reads.
+     */
+    id: "shamcash",
+    name: ["Sham Cash", "شام كاش"],
+    typeId: "shamcash",
+    design: {
+      fg: "#2b4f95",
+      gradient: g("#374eac", "#4c9da4", 135),
+      dotStyle: "rounded",
+      eyeFrameStyle: "rounded",
+      eyeBallStyle: "rounded",
+      frameStyle: "banner",
+      frameColor: "#2b4f95",
+      frameText: "شام كاش",
+      frameTextColor: "#ffffff",
+      frameFont: "sans",
+      logoId: SHAMCASH_LOGO_ID,
+      logoShape: "circle",
+      logoSize: 22,
+      ecc: "Q",
+    },
+  },
   {
     id: "business",
     name: ["Business", "الأعمال التجارية"],
@@ -141,7 +193,7 @@ export function sanitizeDesign(raw: unknown): DesignConfig {
     eyeBallStyle: pick(r.eyeBallStyle, ["square", "rounded", "circle", "diamond", "leaf"] as const, "square"),
     eyeFrameColor: typeof r.eyeFrameColor === "string" ? color(r.eyeFrameColor, d.fg) : null,
     eyeBallColor: typeof r.eyeBallColor === "string" ? color(r.eyeBallColor, d.fg) : null,
-    logoId: typeof r.logoId === "number" ? r.logoId : null,
+    logoId: typeof r.logoId === "number" && (r.logoId > 0 || BUILTIN_LOGOS[r.logoId]) ? r.logoId : null,
     logoSize: num(r.logoSize, 8, 30, 20),
     logoPadding: num(r.logoPadding, 0, 3, 1),
     logoShape: r.logoShape === "circle" ? "circle" : "square",

@@ -1,34 +1,24 @@
-import { Component, Suspense, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
+import { Component, Suspense, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { Clock, HardDrive, LayoutTemplate, Library, Palette, QrCode, ScanLine, Settings, Sparkles } from "lucide-react";
 import type { SectionId } from "./core/types";
 import { T } from "./core/i18n";
-import { loadSettings, storageEstimate } from "./db/db";
+import { loadSettings, pruneOldest, storageAudit, storageEstimate } from "./db/db";
 import { formatBytes } from "./core/i18n";
 import { AppProvider, useApp } from "./state/AppContext";
 import { ProjectProvider } from "./state/ProjectContext";
 import { cn } from "./utils/cn";
 import { playSound } from "./core/sound";
 import { usePwa } from "./pwa/PwaProvider";
+// The create screen ships with the shell: it is what a first-time visitor sees,
+// so it must not wait for a second download. The rest load on first use and are
+// warmed into the cache right after boot (see `screens.tsx`).
 import CreateScreen from "./components/CreateScreen";
-import DesignEditor from "./components/DesignEditor";
-import ScannerScreen from "./components/ScannerScreen";
-import LibraryScreen from "./components/LibraryScreen";
-import HistoryScreen from "./components/HistoryScreen";
-import TemplatesScreen from "./components/TemplatesScreen";
+import { prefetchScreens, Screens } from "./components/screens";
 import { ConfirmHost, IconBtn, Spinner, ToastHost, UpdateBadge } from "./components/ui";
 import { SettingsSheet } from "./components/SettingsSheet";
 import ConnectionStatus from "./components/ConnectionStatus";
 import InstallButton from "./components/InstallButton";
 
-/**
- * Every screen ships inside the single app-shell bundle on purpose.
- *
- * They used to be `React.lazy()` chunks (~77 KB in total). Small, but it meant a
- * screen could die while offline: if the browser evicted one chunk (it does that
- * under storage pressure, and iOS Safari does it even sooner) that screen broke
- * even though the app itself was cached and running. Shipping them in the shell
- * makes offline honest and all-or-nothing — if the app boots, every screen works.
- */
 
 const NAV: { id: SectionId; label: readonly [string, string]; icon: typeof QrCode }[] = [
   { id: "create", label: T.create, icon: Sparkles },
@@ -95,11 +85,70 @@ function StorageChip() {
   );
 }
 
+/**
+ * Warn before the browser runs out of room, and offer the two ways out.
+ *
+ * Codes, logos, scan history and the offline cache all share one bucket, and a
+ * browser that fills it starts failing writes silently — a code you saved
+ * simply is not there next time. So once the bucket is nearly full we say so,
+ * with a backup button and a "clean up" button on the same toast.
+ */
+function useStorageGuard() {
+  const { t, dataVersion, toast, fail } = useApp();
+  const warned = useRef(false);
+  useEffect(() => {
+    if (warned.current) return;
+    let alive = true;
+    const id = setTimeout(async () => {
+      try {
+        const a = await storageAudit();
+        if (!alive || a.percent === null || a.percent < 85) return;
+        warned.current = true;
+        toast(
+          t([
+            `Storage is ${Math.round(a.percent)}% full. Export a backup or clear old codes to keep saving.`,
+            `التخزين ممتلئ بنسبة ${Math.round(a.percent)}٪. صدّر نسخة احتياطية أو احذف الرموز القديمة لتتمكن من الحفظ.`,
+          ]),
+          "info",
+          {
+            label: t(["Clean old codes", "تنظيف الرموز القديمة"]),
+            run: async () => {
+              try {
+                const gone = await pruneOldest();
+                bumpAll();
+                toast(
+                  gone.codes || gone.history
+                    ? t([`Freed space: removed ${gone.codes} old codes and ${gone.history} history entries.`, `تم تحرير المساحة: حُذف ${gone.codes} رمزاً قديماً و${gone.history} من السجل.`])
+                    : t(["Nothing old enough to remove — favourites are kept.", "لا شيء قديم للحذف — الرموز المفضلة محفوظة."]),
+                  "info",
+                );
+              } catch (e) {
+                fail(e);
+              }
+            },
+          },
+        );
+      } catch {
+        /* storage audit is best-effort */
+      }
+    }, 2500);
+    return () => {
+      alive = false;
+      clearTimeout(id);
+    };
+  }, [dataVersion, t, toast, fail]);
+}
+
+/** Re-render every list once storage has been cleaned. */
+let bumpAll = () => {};
+
 function Shell() {
-  const { t, lang, setLang, section, go, setSettingsOpen } = useApp();
+  const { t, lang, setLang, section, go, setSettingsOpen, bumpData } = useApp();
   // True only once a new version has finished downloading and is waiting.
   const { needRefresh } = usePwa();
   const [boundaryKey, setBoundaryKey] = useState(0);
+  useStorageGuard();
+  bumpAll = bumpData;
 
   // Only the section change makes a sound: navigating is a distinct action.
   const navigate = (id: SectionId) => {
@@ -108,15 +157,17 @@ function Shell() {
   };
 
   const screen = (() => {
-    switch (section) {
-      case "design": return <DesignEditor />;
-      case "scan": return <ScannerScreen />;
-      case "library": return <LibraryScreen />;
-      case "history": return <HistoryScreen />;
-      case "templates": return <TemplatesScreen />;
-      default: return <CreateScreen />;
-    }
+    if (section === "create") return <CreateScreen />;
+    const Screen = Screens[section];
+    return Screen ? <Screen /> : <CreateScreen />;
   })();
+
+  // Warm the other screens into the precache once the shell is on screen, so a
+  // trip through a tunnel is no worse than it was when they all shipped in it.
+  useEffect(() => {
+    const id = setTimeout(prefetchScreens, 1200);
+    return () => clearTimeout(id);
+  }, []);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-bg text-fg" style={{ paddingTop: "env(safe-area-inset-top)", paddingLeft: "env(safe-area-inset-left)", paddingRight: "env(safe-area-inset-right)" }}>

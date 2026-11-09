@@ -16,7 +16,7 @@ interface BtnProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const VARIANTS: Record<Variant, string> = {
-  primary: "bg-gradient-to-br from-brand to-[color-mix(in_srgb,var(--c-brand)_70%,#22d3ee)] text-white shadow-[0_6px_18px_-8px_var(--c-brand)] hover:brightness-110",
+  primary: "btn-primary bg-gradient-to-br from-brand to-[color-mix(in_srgb,var(--c-brand)_70%,#22d3ee)] text-white shadow-[0_6px_18px_-8px_var(--c-brand)] hover:brightness-110",
   soft: "bg-surface2 text-fg border border-line hover:border-brand/50",
   ghost: "text-muted hover:text-fg hover:bg-surface2",
   danger: "bg-bad/15 text-bad border border-bad/30 hover:bg-bad/25",

@@ -5,7 +5,7 @@ import { BUILTIN_TEMPLATES, designFromTemplate } from "../core/designDefaults";
 import { T } from "../core/i18n";
 import { useApp } from "../state/AppContext";
 import { useProject } from "../state/ProjectContext";
-import { buildRows, buildZip, generateBatch, parseCsv, type BatchKind, type GeneratedItem, type ZipFormat } from "../engine/batch";
+import { buildRows, MAX_BATCH_ROWS, buildZip, generateBatch, parseCsv, type BatchKind, type GeneratedItem, type ZipFormat } from "../engine/batch";
 import { downloadBlob, timestampName } from "../engine/exportEngine";
 import { svgToDataUrl } from "../engine/designEngine";
 import { listTemplates, saveBatch } from "../db/db";
@@ -47,6 +47,9 @@ export default function BatchPanel() {
   const rows = useMemo(() => buildRows(table, kind, Math.min(contentCol, cols - 1), nameCol >= cols ? -1 : nameCol), [table, kind, contentCol, nameCol, cols]);
   const validCount = rows.filter((r) => !r.error).length;
   const invalidCount = rows.length - validCount;
+  // The parser stops at MAX_BATCH_ROWS; say so rather than quietly dropping the
+  // rest of somebody's file.
+  const truncated = useMemo(() => parseCsv(text).length - (hasHeader ? 1 : 0) > MAX_BATCH_ROWS, [text, hasHeader]);
 
   const onFile = async (f: File | undefined) => {
     if (!f) return;
@@ -100,17 +103,21 @@ export default function BatchPanel() {
 
   const onSave = async () => {
     if (!items?.length) return;
+    setBusy(true);
     try {
       const now = Date.now();
-      const id = await saveBatch(prefix.trim() || `${t(["Batch", "دفعة"])} ${new Date(now).toLocaleDateString()}`, items.map((it) => ({
+      const rows = items.map((it) => ({
         name: it.name, description: "", content: it.content, type: kind === "phone" ? "phone" : kind === "email" ? "email" : kind === "url" ? "url" : "text",
         form_values: (kind === "url" ? { url: it.content } : kind === "phone" ? { phone: it.content.replace(/^tel:/, "") } : kind === "email" ? { to: it.content.replace(/^mailto:/, "") } : { text: it.content }) as Record<string, string>,
         design_config: usedDesign, favorite: 0 as const, category: "",
-      })));
+      }));
+      // Written in slices: one transaction per few hundred rows keeps the table
+      // usable and the memory flat while the save is running.
+      const id = await saveBatch(prefix.trim() || `${t(["Batch", "دفعة"])} ${new Date(now).toLocaleDateString()}`, rows, (d, n) => setProgress([d, n]));
       logActivity({ action: "save", type: kind, content: `batch #${id} (${items.length})`, name: prefix || "Batch" });
       bumpData();
       toast([`Saved ${items.length} codes to My codes`, `تم حفظ ${items.length} رمزاً في رموزي`]);
-    } catch (e) { fail(e); }
+    } catch (e) { fail(e); } finally { setBusy(false); setProgress(null); }
   };
 
   const onZip = async () => {
@@ -195,6 +202,16 @@ export default function BatchPanel() {
                 </span>
               )}
             </div>
+            {truncated && (
+              <p className="mb-2 rounded-xl border border-line bg-surface2/50 px-3 py-2 text-[11.5px] leading-5 text-muted">
+                {t(
+                  [
+                    `Your file has more rows than one batch can hold, so the first ${MAX_BATCH_ROWS} are used. Split it into a few files to do the rest.`,
+                    `ملفك يحتوي على أسطر أكثر مما تحتمله الدفعة الواحدة، لذا تُستخدم أول ${MAX_BATCH_ROWS} سطراً. قسّمه إلى عدة ملفات لإكمال الباقي.`,
+                  ],
+                )}
+              </p>
+            )}
             {rows.length === 0 ? (
               <Empty icon={<FileUp size={26} />} title={t(["No data yet", "لا توجد بيانات بعد"])} desc={t(["Paste lines or import a CSV file to preview them here.", "الصق أسطراً أو استورد ملف CSV لمعاينتها هنا."])} />
             ) : (

@@ -176,6 +176,24 @@ const RULES: Rule[] = [
 const isAndroid = () => /android/i.test(navigator.userAgent);
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
 
+/**
+ * Whether the browser in front of us can resolve an `intent:` URI.
+ *
+ * Intents are an Android feature, but not a web feature: Chromium (Chrome, Edge,
+ * Opera, Samsung Internet, Brave…) parses `intent://` and honours
+ * `S.browser_fallback_url`, while Gecko and the OEM mini-browsers do not. In
+ * those the URI is just an unknown scheme, so it is handed to the system and the
+ * system answers — on screen — that no app can open it. That is the message we
+ * are avoiding, so it is the one thing worth checking before we build one.
+ */
+export function supportsIntents(): boolean {
+  if (typeof navigator === "undefined" || !isAndroid()) return false;
+  const ua = navigator.userAgent;
+  if (/Firefox|FxiOS/i.test(ua)) return false;
+  if (/MiuiBrowser|UCBrowser|UCWEB|QQBrowser|VivoBrowser|HeyTapBrowser|OppoBrowser|HuaweiBrowser|HeyTap|MZBrowser/i.test(ua)) return false;
+  return /Chrome\/|Chromium\/|EdgA?\/|OPR\/|SamsungBrowser|CriOS/i.test(ua);
+}
+
 export interface AppHandoff {
   /** what to open */
   url: string;
@@ -192,7 +210,7 @@ export interface AppHandoff {
  * How to open `webUrl` in the app that owns it, or null when we know of no such
  * app (the caller then just opens the URL in the browser).
  */
-export function appHandoff(webUrl: string): AppHandoff | null {
+export function appHandoff(webUrl: string, openInApp = true): AppHandoff | null {
   let u: URL;
   try {
     u = new URL(webUrl);
@@ -200,11 +218,17 @@ export function appHandoff(webUrl: string): AppHandoff | null {
     return null;
   }
   if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  // Switched off: hand over the https link and let the platform's own App Links
+  // decide. That is the one path that can never produce an error dialog on any
+  // device, so it is what we fall back to when a hand-off is not safe.
+  if (!openInApp) return null;
+  // Intents only where they are understood (see `supportsIntents`).
+  const android = isAndroid() && supportsIntents();
 
   for (const rule of RULES) {
     if (!rule.host.test(u.hostname)) continue;
     try {
-      if (isAndroid() && rule.pkg) return androidIntent(u, webUrl, rule);
+      if (android && rule.pkg) return androidIntent(u, webUrl, rule);
 
       const shared = rule.both?.(u) ?? null;
       if (shared) return { url: `${shared.scheme}://${shared.rest}`, atomic: false };

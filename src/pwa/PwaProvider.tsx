@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { RefreshCw, X } from "lucide-react";
 import { useRegisterSW } from "virtual:pwa-register/react";
 import { whenWritesIdle } from "../db/db";
 
@@ -97,6 +98,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
   const [canInstall, setCanInstall] = useState(false);
   const [installed, setInstalled] = useState(standaloneQuery);
   const [offlineReadyDismissed, setOfflineReadyDismissed] = useState(false);
+  const [promptDismissed, setPromptDismissed] = useState(false);
   const deferred = useRef<BeforeInstallPromptEvent | null>(null);
   const registration = useRef<ServiceWorkerRegistration | null>(null);
 
@@ -297,6 +299,11 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     if (!offlineReady) setOfflineReadyDismissed(false);
   }, [offlineReady]);
 
+  // Dismissing hides the prompt until the next version shows up.
+  useEffect(() => {
+    if (!needRefresh) setPromptDismissed(false);
+  }, [needRefresh]);
+
   const state: ConnectionState = !online
     ? "offline"
     : needRefresh
@@ -338,5 +345,60 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return <PwaCtx.Provider value={value}>{children}</PwaCtx.Provider>;
+  return (
+    <PwaCtx.Provider value={value}>
+      {children}
+      <UpdatePrompt show={needRefresh && !promptDismissed} onUpdate={() => void updateNow()} onDismiss={() => setPromptDismissed(true)} />
+    </PwaCtx.Provider>
+  );
+}
+
+/**
+ * "A new version is ready" with the button right on it.
+ *
+ * The provider is the only place that knows a worker is waiting, so the prompt
+ * lives here rather than in whichever screen happens to be open. Dismissing it
+ * hides it for this session; the badge on the settings icon stays until the
+ * update is actually installed, so the offer never disappears for good.
+ */
+function UpdatePrompt({ show, onUpdate, onDismiss }: { show: boolean; onUpdate: () => void; onDismiss: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const ar = typeof document !== "undefined" && document.documentElement.lang === "ar";
+  if (!show) return null;
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onUpdate();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div
+      role="alert"
+      data-testid="update-prompt"
+      className="anim-sheet fixed inset-x-0 z-50 mx-auto flex max-w-md items-center gap-3 rounded-2xl border border-brand/40 bg-surface/95 p-3 shadow-2xl backdrop-blur"
+      style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 72px)" }}
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand/15 text-brand">
+        <RefreshCw size={18} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-semibold">{ar ? "نسخة جديدة جاهزة" : "A new version is ready"}</span>
+        <span className="block text-xs text-muted">{ar ? "حدّث الآن لتحصل على آخر التصحيحات والمزايا." : "Update now for the latest fixes and features."}</span>
+      </span>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={run}
+        className="press btn-primary min-h-9 shrink-0 rounded-xl bg-brand px-3 text-[13px] font-semibold text-white disabled:opacity-50"
+      >
+        {ar ? "تحديث الآن" : "Update now"}
+      </button>
+      <button type="button" onClick={onDismiss} aria-label={ar ? "لاحقاً" : "Later"} className="press min-h-9 shrink-0 rounded-xl px-2 text-muted hover:text-fg">
+        <X size={18} />
+      </button>
+    </div>
+  );
 }

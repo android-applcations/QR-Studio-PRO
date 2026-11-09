@@ -242,13 +242,35 @@ export function primeLogoCache(id: number, url: string) {
 }
 
 // ---------- Batches ----------
-export async function saveBatch(name: string, items: Omit<QrRecord, "id" | "uid" | "batchId" | "created_at" | "updated_at">[]): Promise<number> {
-  return track(db.transaction("rw", db.qr_batches, db.qr_codes, async () => {
-    const now = Date.now();
-    const batchId = await db.qr_batches.add({ name, created_at: now, items_count: items.length });
-    await db.qr_codes.bulkAdd(items.map((it, i) => ({ ...it, uid: uid(), batchId, created_at: now + i, updated_at: now + i }) as QrRecord));
-    return batchId;
-  }));
+/**
+ * Save a generated batch.
+ *
+ * Two things make a 2 000-code batch survivable where a single write is not:
+ *
+ * - the rows go in several transactions instead of one. One `bulkAdd` of
+ *   thousands of records holds every one of them in memory for the life of the
+ *   transaction and blocks every other write to the table while it runs, which
+ *   is how the library screen stops responding during a save;
+ * - `onProgress` is called between slices, so the panel can move.
+ */
+export async function saveBatch(
+  name: string,
+  items: Omit<QrRecord, "id" | "uid" | "batchId" | "created_at" | "updated_at">[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<number> {
+  const now = Date.now();
+  const batchId = await track(db.transaction("rw", db.qr_batches, async () => db.qr_batches.add({ name, created_at: now, items_count: items.length })));
+  const CHUNK = 250;
+  for (let i = 0; i < items.length; i += CHUNK) {
+    const slice = items.slice(i, i + CHUNK);
+    await track(
+      db.transaction("rw", db.qr_codes, () =>
+        db.qr_codes.bulkAdd(slice.map((it, k) => ({ ...it, uid: uid(), batchId, created_at: now + i + k, updated_at: now + i + k }) as QrRecord)),
+      ),
+    );
+    onProgress?.(Math.min(items.length, i + CHUNK), items.length);
+  }
+  return batchId;
 }
 
 // ---------- Stats & storage ----------
@@ -290,6 +312,63 @@ export async function storageEstimate(): Promise<{ usage: number; quota: number 
     /* unsupported */
   }
   return null;
+}
+
+/**
+ * How full the browser's storage for this origin is.
+ *
+ * `quota` is the whole bucket the browser gave us, not a hard promise, and some
+ * browsers report nothing at all — hence `percent: null` when we cannot know.
+ */
+export interface StorageAudit {
+  usage: number;
+  quota: number;
+  /** 0–100, or null when the browser will not say */
+  percent: number | null;
+  /** saved codes currently taking up space */
+  codes: number;
+  /** entries in the scan history */
+  history: number;
+}
+
+export async function storageAudit(): Promise<StorageAudit> {
+  const [est, codes, history] = await Promise.all([storageEstimate(), db.qr_codes.count(), db.scan_history.count()]);
+  const usage = est?.usage ?? 0;
+  const quota = est?.quota ?? 0;
+  return { usage, quota, percent: quota > 0 ? Math.min(100, (usage / quota) * 100) : null, codes, history };
+}
+
+/**
+ * Free space the careful way: drop the oldest codes that are not favourites,
+ * and trim the scan history to its newest entries.
+ *
+ * `keep` is a floor, not a target — nothing is deleted while there are fewer
+ * saved codes than that, so an audit can call this without fear.
+ */
+export async function pruneOldest(keep = 200, keepHistory = 300): Promise<{ codes: number; history: number }> {
+  const [codes, history] = await Promise.all([
+    db.qr_codes.orderBy("created_at").reverse().toArray(),
+    db.scan_history.count(),
+  ]);
+  let removedCodes = 0;
+  if (codes.length > keep) {
+    // Newest first, so the tail is the oldest — and favourites are never touched.
+    const doomed = codes.slice(keep).filter((c) => !c.favorite).map((c) => c.id).filter((id): id is number => typeof id === "number");
+    if (doomed.length) {
+      await deleteQr(doomed);
+      removedCodes = doomed.length;
+    }
+  }
+  let removedHistory = 0;
+  if (history > keepHistory) {
+    const oldest = await db.scan_history.orderBy("scanned_at").limit(history - keepHistory).toArray();
+    const ids = oldest.map((h) => h.id).filter((id): id is number => typeof id === "number");
+    if (ids.length) {
+      await deleteHistory(ids);
+      removedHistory = ids.length;
+    }
+  }
+  return { codes: removedCodes, history: removedHistory };
 }
 
 export async function requestPersistence(): Promise<boolean> {

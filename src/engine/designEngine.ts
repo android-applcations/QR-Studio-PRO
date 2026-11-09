@@ -200,8 +200,17 @@ export function renderQrSvg(content: string, d: DesignConfig, opts: RenderOption
   const capY = top ? pad : pad + S;
 
   // --- Logo geometry (in modules) ---
+  // A logo is a hole punched in the data, and the hole is centered, so past a
+  // certain size it starts eating the timing patterns that run through the
+  // middle of the symbol — at which point no amount of error correction puts
+  // the code back together. The cleared square is therefore held under a fifth
+  // of the symbol no matter what the slider says. Nothing is said about it; the
+  // logo simply stays the largest size that still scans.
+  const LOGO_MAX_AREA = 0.2;
   const logoModules = logo ? Math.max(3, (N * d.logoSize) / 100) : 0;
-  const clearModules = logo ? logoModules + d.logoPadding * 2 : 0;
+  const clearModules = logo
+    ? Math.min(logoModules + d.logoPadding * 2, Math.sqrt(LOGO_MAX_AREA * N * N))
+    : 0;
   const half = clearModules / 2;
   const mid = N / 2;
   const coverage = logo ? Math.min(1, (clearModules * clearModules) / (N * N)) : 0;

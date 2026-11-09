@@ -45,6 +45,9 @@ interface Ctx {
   /** light UI feedback sounds (never musical) */
   sounds: boolean;
   setSounds: (v: boolean) => void;
+  /** open scanned links in the app that owns them, when it is installed */
+  appLinks: boolean;
+  setAppLinks: (v: boolean) => void;
   t: (tx: Tx) => string;
   section: SectionId;
   go: (s: SectionId) => void;
@@ -76,6 +79,10 @@ export function AppProvider({ initial, children }: { initial: Record<string, unk
   const [saveHistory, setSaveHistoryState] = useState(initial.saveHistory !== false);
   const [autoSave, setAutoSaveState] = useState(initial.autoSave === true);
   const [sounds, setSoundsState] = useState(initial.sounds !== false);
+  // Deep-linking into the app that owns a link is the nicer experience, but on
+  // a browser that mishandles the hand-off it is the one thing that can put an
+  // OS error on screen — so it stays switchable.
+  const [appLinks, setAppLinksState] = useState(initial.appLinks !== false);
   const [section, setSection] = useState<SectionId>(initialSection);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -96,6 +103,7 @@ export function AppProvider({ initial, children }: { initial: Record<string, unk
   const setSaveHistory = useCallback((v: boolean) => { setSaveHistoryState(v); persist("saveHistory", v); }, [persist]);
   const setAutoSave = useCallback((v: boolean) => { setAutoSaveState(v); persist("autoSave", v); }, [persist]);
   const setSounds = useCallback((v: boolean) => { setSoundsState(v); persist("sounds", v); }, [persist]);
+  const setAppLinks = useCallback((v: boolean) => { setAppLinksState(v); persist("appLinks", v); }, [persist]);
 
   // Keep the audio engine in sync with the setting (and mute it immediately).
   useEffect(() => {
@@ -117,7 +125,7 @@ export function AppProvider({ initial, children }: { initial: Record<string, unk
     const apply = () => {
       const eff = theme === "system" ? (mq.matches ? "dark" : "light") : theme;
       document.documentElement.dataset.theme = eff;
-      document.querySelector('meta[name="theme-color"]')?.setAttribute("content", eff === "dark" ? "#090a10" : "#f2f3f8");
+      document.querySelector('meta[name="theme-color"]')?.setAttribute("content", eff === "dark" ? "#090a10" : "#eef1f9");
     };
     apply();
     mq.addEventListener("change", apply);
@@ -169,7 +177,7 @@ export function AppProvider({ initial, children }: { initial: Record<string, unk
   }, [bumpData]);
 
   const value = useMemo<Ctx>(() => ({
-    lang, dir, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, sounds, setSounds, t,
+    lang, dir, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, sounds, setSounds, appLinks, setAppLinks, t,
     section, go, settingsOpen, setSettingsOpen, toast, toasts, dismissToast, fail, confirm, confirmState,
     logActivity, dataVersion, bumpData,
   }), [lang, dir, setLang, theme, setTheme, saveHistory, setSaveHistory, autoSave, setAutoSave, sounds, setSounds, t, section, go, settingsOpen, toast, toasts, dismissToast, fail, confirm, confirmState, logActivity, dataVersion, bumpData]);
