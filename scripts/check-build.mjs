@@ -122,6 +122,34 @@ if (sw) {
   }
 }
 
+// ---------------------------------------------------------------- engine purity
+/**
+ * The engines must stay pure.
+ *
+ * `designEngine` turns content plus a design into an SVG string — nothing else.
+ * That is why it can run in a worker and why it is testable without a browser.
+ * `exportEngine` builds bytes the same way and keeps the parts that have to
+ * touch the page (downloading, copying, sharing) in its Delivery section.
+ *
+ * A stray `document.` in a generation module silently ties it to a tab, which
+ * breaks both. This is the guard.
+ */
+const PURE_ENGINES = ["src/engine/designEngine.ts", "src/engine/pdf.ts", "src/core/qrTypes.ts", "src/core/scanView.ts", "src/core/security.ts"];
+const impure = [];
+for (const rel of PURE_ENGINES) {
+  const text = readFileSync(rel, "utf8");
+  const lines = text.split("\n");
+  // A guarded read (`typeof document === "undefined" ? … : document.lang`) is a
+  // feature check, not a dependency: the module still works without a DOM.
+  // Reaching for the DOM to do the actual work is what this catches.
+  lines.forEach((line, i) => {
+    if (/\btypeof\s+(window|document|navigator|localStorage)\b/.test(line)) return;
+    for (const m of line.matchAll(/\b(window|document|navigator|localStorage)\s*\./g)) impure.push(`${rel}:${i + 1} → ${m[0]}`);
+  });
+}
+if (impure.length) fail(`engines touching the DOM: ${impure.join(", ")}`);
+else ok(`generation engines stay pure (${PURE_ENGINES.length} modules, no window/document/navigator)`);
+
 // ---------------------------------------------------------------- external deps
 /**
  * QR payloads legitimately contain external links (that is the user's content, not

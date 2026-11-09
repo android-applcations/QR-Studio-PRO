@@ -9,26 +9,16 @@ import { ProjectProvider } from "./state/ProjectContext";
 import { cn } from "./utils/cn";
 import { playSound } from "./core/sound";
 import { usePwa } from "./pwa/PwaProvider";
+// The create screen ships with the shell: it is what a first-time visitor sees,
+// so it must not wait for a second download. The rest load on first use and are
+// warmed into the cache right after boot (see `screens.tsx`).
 import CreateScreen from "./components/CreateScreen";
-import DesignEditor from "./components/DesignEditor";
-import ScannerScreen from "./components/ScannerScreen";
-import LibraryScreen from "./components/LibraryScreen";
-import HistoryScreen from "./components/HistoryScreen";
-import TemplatesScreen from "./components/TemplatesScreen";
+import { prefetchScreens, Screens } from "./components/screens";
 import { ConfirmHost, IconBtn, Spinner, ToastHost, UpdateBadge } from "./components/ui";
 import { SettingsSheet } from "./components/SettingsSheet";
 import ConnectionStatus from "./components/ConnectionStatus";
 import InstallButton from "./components/InstallButton";
 
-/**
- * Every screen ships inside the single app-shell bundle on purpose.
- *
- * They used to be `React.lazy()` chunks (~77 KB in total). Small, but it meant a
- * screen could die while offline: if the browser evicted one chunk (it does that
- * under storage pressure, and iOS Safari does it even sooner) that screen broke
- * even though the app itself was cached and running. Shipping them in the shell
- * makes offline honest and all-or-nothing — if the app boots, every screen works.
- */
 
 const NAV: { id: SectionId; label: readonly [string, string]; icon: typeof QrCode }[] = [
   { id: "create", label: T.create, icon: Sparkles },
@@ -167,15 +157,17 @@ function Shell() {
   };
 
   const screen = (() => {
-    switch (section) {
-      case "design": return <DesignEditor />;
-      case "scan": return <ScannerScreen />;
-      case "library": return <LibraryScreen />;
-      case "history": return <HistoryScreen />;
-      case "templates": return <TemplatesScreen />;
-      default: return <CreateScreen />;
-    }
+    if (section === "create") return <CreateScreen />;
+    const Screen = Screens[section];
+    return Screen ? <Screen /> : <CreateScreen />;
   })();
+
+  // Warm the other screens into the precache once the shell is on screen, so a
+  // trip through a tunnel is no worse than it was when they all shipped in it.
+  useEffect(() => {
+    const id = setTimeout(prefetchScreens, 1200);
+    return () => clearTimeout(id);
+  }, []);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-bg text-fg" style={{ paddingTop: "env(safe-area-inset-top)", paddingLeft: "env(safe-area-inset-left)", paddingRight: "env(safe-area-inset-right)" }}>
