@@ -2,7 +2,8 @@ import type { DesignConfig } from "../core/types";
 import { renderQrSvg } from "./designEngine";
 import { MAX_CANVAS } from "./raster";
 import { buildPdf, mmToPt, PAPER, type PdfPage } from "./pdf";
-import { rasterizeBlob } from "./renderClient";
+import { buildPdfOffThread, rasterizeBlob } from "./renderClient";
+export { sanitizeFilename, timestampName } from "./naming";
 
 export type ExportFormat = "png" | "jpg" | "svg" | "pdf";
 export type PaperKey = "a4" | "a5" | "letter" | "fit";
@@ -30,22 +31,6 @@ export const MIME: Record<ExportFormat, string> = {
 
 export const supportsTransparency = (f: ExportFormat) => f === "png" || f === "svg";
 
-export function sanitizeFilename(name: string, fallback = "qr-code"): string {
-  const cleaned = name
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/^\.+/, "")
-    .slice(0, 80)
-    .trim();
-  return cleaned || fallback;
-}
-
-export function timestampName(prefix: string): string {
-  const d = new Date();
-  const p = (x: number) => String(x).padStart(2, "0");
-  return `${sanitizeFilename(prefix, "qr")}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
-}
-
 const clampSize = (n: number) => Math.max(128, Math.min(MAX_CANVAS, Math.round(n)));
 
 export async function renderToBlob(
@@ -65,6 +50,10 @@ export async function renderToBlob(
   if (opts.format === "pdf") {
     const mm = Math.max(10, Math.min(opts.paper === "fit" ? 400 : 190, opts.printMm));
     const px = clampSize(Math.max(1000, (mm / 25.4) * 300));
+    // Rendering at 300 dpi and then assembling the PDF is the heaviest export
+    // there is; the worker does both ends of it when one is available.
+    const off = await buildPdfOffThread(r.svg, r.height / r.width, opts.paper, mm, opts.filename || undefined);
+    if (off) return off;
     const page = await buildPdfPage([{ svg: r.svg, ratio: r.height / r.width }], mm, opts.paper, 0, px);
     return buildPdf([page]);
   }

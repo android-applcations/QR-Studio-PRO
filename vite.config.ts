@@ -26,11 +26,22 @@ export default defineConfig({
       registerType: "prompt",
       injectManifest: {
         // JS/CSS (including every React.lazy chunk), the HTML shell, the offline
-        // fallback page and every static asset are precached.
+        // fallback page and the icons the manifest points at are precached.
         globPatterns: ["**/*.{js,css,html,ico,svg,png,webp,json,txt,webmanifest}"],
-        // Only source maps are skipped: `assets/workbox-window.*.js` is a real
-        // runtime chunk (used to register the service worker) and must be cached.
-        globIgnores: ["**/*.map"],
+        // Brand marks are deliberately NOT precached.
+        //
+        // A logo library grows: every mark added to `public/brands` was being
+        // downloaded at install time, before anybody looked at it, and stayed in
+        // storage forever. On a phone with a few hundred marks that is tens of
+        // megabytes fetched on first visit to build a cache of images most
+        // users never open. They are cached the first time they are actually
+        // requested instead (see the `/brands/` route in `src/sw.ts`), which
+        // costs nothing extra for the marks a person uses and nothing at all
+        // for the rest.
+        //
+        // Source maps are skipped; `assets/workbox-window.*.js` is a real
+        // runtime chunk (used to register the service worker) and must stay.
+        globIgnores: ["**/*.map", "brands/**"],
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         rollupFormat: "iife",
         minify: true,

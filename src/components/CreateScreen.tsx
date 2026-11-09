@@ -4,7 +4,7 @@ import type { QrCategoryId, QrTypeDef } from "../core/types";
 import { CATEGORIES, detailRows, QR_TYPES, typesOfCategory } from "../core/qrTypes";
 import { T } from "../core/i18n";
 import { useApp } from "../state/AppContext";
-import { useProject } from "../state/ProjectContext";
+import { useProject, useProjectActions } from "../state/ProjectContext";
 import { copyText, canShareFile, renderToBlob, shareFile, downloadBlob, sanitizeFilename } from "../engine/exportEngine";
 import { HERO, withTransition } from "../utils/transition";
 import { cn } from "../utils/cn";
@@ -42,7 +42,9 @@ const TypeCard = memo(function TypeCard({ def, onPick }: { def: QrTypeDef; onPic
 
 function Picker({ onPick }: { onPick: (id: string, el: HTMLElement) => void }) {
   const { t } = useApp();
-  const { setStep } = useProject();
+  // Only an action is needed here, so browsing the catalogue is not rebuilt
+  // every time the project changes underneath it.
+  const { setStep } = useProjectActions();
   const [cat, setCat] = useState<QrCategoryId | "all">("all");
   const [q, setQ] = useState("");
   const query = q.trim().toLowerCase();

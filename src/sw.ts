@@ -31,6 +31,7 @@ declare const self: ServiceWorkerGlobalScope & {
 /** Self-contained fallback page (bilingual, no external resources). */
 const OFFLINE_URL = "offline.html";
 const RUNTIME_CACHE = "qr-studio-runtime";
+const BRAND_CACHE = "qr-studio-brands";
 
 /**
  * Workbox injects the precache manifest by string-replacing the well-known
@@ -176,6 +177,24 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
     );
   }
 });
+
+// ---------------------------------------------------------------------------
+// Brand marks: cached the first time they are asked for, never before.
+//
+// These are images the app *offers*, not images it *needs*: a mark only matters
+// once somebody picks that brand. Precaching them all would spend the user's
+// bandwidth and storage on logos they may never see, and the list only grows.
+// So they are served from the cache when we have them, and fetched (and then
+// kept) when we do not. The first paint of a logo is the only cost, and it is
+// the same cost a plain <img> would pay.
+// ---------------------------------------------------------------------------
+registerRoute(
+  ({ sameOrigin, url }) => sameOrigin && url.pathname.startsWith("/brands/"),
+  new StaleWhileRevalidate({
+    cacheName: BRAND_CACHE,
+    plugins: [new ExpirationPlugin({ maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 90, purgeOnQuotaError: true })],
+  }),
+);
 
 // ---------------------------------------------------------------------------
 // Safety net for same-origin static assets that are not part of the precache.

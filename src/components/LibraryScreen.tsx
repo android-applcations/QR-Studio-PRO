@@ -5,7 +5,7 @@ import { TYPE_BY_ID } from "../core/qrTypes";
 import { T, formatDate } from "../core/i18n";
 import { addCategory, deleteCategory, deleteQr, duplicateQr, listCategories, listQr, patchManyQr, patchQr, restoreQr } from "../db/db";
 import { useApp } from "../state/AppContext";
-import { useProject } from "../state/ProjectContext";
+import { useProjectActions } from "../state/ProjectContext";
 import { useAsyncList, useLogoMap } from "../state/useData";
 import { canCopyImage, canShareFile, copyImage, copyText, renderToBlob, sanitizeFilename, shareFile } from "../engine/exportEngine";
 import { cn } from "../utils/cn";
@@ -49,7 +49,7 @@ const Card = memo(function Card({ rec, logo, selected, selecting, onOpen, onTogg
 
 export default function LibraryScreen() {
   const { t, lang, dataVersion, bumpData, toast, fail, confirm, go } = useApp();
-  const { loadRecord } = useProject();
+  const { loadRecord } = useProjectActions();
   const { data: records, loading } = useAsyncList(listQr, dataVersion);
   const { data: cats } = useAsyncList(listCategories, dataVersion);
   const logos = useLogoMap(records.map((r) => r.design_config.logoId));

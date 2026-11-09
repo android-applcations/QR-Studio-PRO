@@ -11,7 +11,7 @@
  *         CHROME_PATH=/path/to/chrome npm run test:polish
  */
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -411,9 +411,51 @@ try {
     JSON.stringify(guard),
   );
 
+  // ------------------------------------------------------------ a real export
+  // The PDF page is built in the render worker now, so the only way to know it
+  // still works is to ask for one and read the bytes that come out.
+  const dl = join(tmpdir(), "qr-polish-dl");
+  mkdirSync(dl, { recursive: true });
+  const cdp = await page.createCDPSession();
+  await cdp.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: dl, eventsEnabled: true });
+  await makeQr("Website", [["#f-url-url", "https://example.com/export-check"]], join(tmpdir(), "qr-polish-export.png"));
+  await page.evaluate(() => {
+    const navs = document.querySelectorAll('nav[aria-label="Main navigation"]');
+    navs[navs.length - 1].querySelectorAll("button")[1].click();
+  });
+  await sleep(2000);
+  const openedExport = await page.evaluate(async () => {
+    const btn = [...document.querySelectorAll("button")].find((e) => /^Export$|^تصدير$/.test((e.textContent || "").trim()) && !e.disabled);
+    if (!btn) return false;
+    btn.click();
+    await new Promise((r) => setTimeout(r, 1200));
+    return !!document.querySelector('[role="dialog"]');
+  });
+  check("export: the sheet opens for a real code", openedExport);
+  if (openedExport) {
+    await page.evaluate(async () => {
+      const pdf = [...document.querySelectorAll("button")].find((e) => /^PDF$/.test((e.textContent || "").trim()));
+      pdf?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const go = [...document.querySelectorAll("button")].find((e) => /^Download$|^تنزيل$/.test((e.textContent || "").trim()));
+      go?.click();
+    });
+    // Give the worker time to render at 300 dpi and hand the bytes back.
+    await sleep(6000);
+    const files = readdirSync(dl).filter((f) => !f.endsWith(".crdownload") && f.endsWith(".pdf"));
+    const pdf = files.find((f) => f.endsWith(".pdf"));
+    check("export: a PDF file came out", !!pdf, files.join(", ") || "(nothing downloaded)");
+    if (pdf) {
+      const head = readFileSync(join(dl, pdf)).subarray(0, 5).toString("latin1");
+      check("export: it is really a PDF", head === "%PDF-", JSON.stringify(head));
+      const size = statSync(join(dl, pdf)).size;
+      check("export: the page is not empty", size > 4000, `${size} bytes`);
+    }
+  }
+
   check("polish audit completed", true);
 } catch (e) {
-  check("polish audit completed", false, String(e).slice(0, 300));
+  check("polish audit completed", false, (e?.stack ?? String(e)).slice(0, 600));
 } finally {
   await browser.close();
   server.kill();

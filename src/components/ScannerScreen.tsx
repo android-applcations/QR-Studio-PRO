@@ -8,7 +8,7 @@ import { T } from "../core/i18n";
 import { addHistory } from "../db/db";
 import { redactForLog } from "../core/qrTypes";
 import { useApp } from "../state/AppContext";
-import { useProject } from "../state/ProjectContext";
+import { useProjectActions } from "../state/ProjectContext";
 import { CameraSession, cameraErrorKind, cameraSupported, decodeImageFile, type CameraCaps, type CameraErrorKind } from "../engine/scannerEngine";
 import { canShareText, copyText, shareText } from "../engine/exportEngine";
 import { cn } from "../utils/cn";
@@ -19,7 +19,7 @@ type Status = "starting" | "live" | "stopped" | "error";
 
 function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void }) {
   const { t, toast, fail, confirm, go, saveHistory, bumpData, appLinks } = useApp();
-  const { loadRaw } = useProject();
+  const { loadRaw } = useProjectActions();
   const [idx, setIdx] = useState(0);
   const [reveal, setReveal] = useState(false);
   const [saved, setSaved] = useState(saveHistory);
@@ -178,6 +178,8 @@ export default function ScannerScreen() {
   /** read inside listeners that must not re-run the effect */
   const deviceIdRef = useRef("");
   deviceIdRef.current = deviceId;
+  const statusRef = useRef(status);
+  statusRef.current = status;
   const [facing, setFacing] = useState<"environment" | "user">("environment");
   const [codes, setCodes] = useState<string[] | null>(null);
   const [busyImg, setBusyImg] = useState(false);
@@ -212,6 +214,9 @@ export default function ScannerScreen() {
         session.stop();
         return;
       }
+      // The camera came back after a failure: clear the error on our own,
+      // without a message — the viewfinder returning is the whole news.
+      setErrKind("unknown");
       setCaps(c);
       setZoom(c.zoom?.min ?? 1);
       setStatus("live");
@@ -266,7 +271,63 @@ export default function ScannerScreen() {
     if (status === "live") autoStopped.current = false;
   }, [status]);
 
+  // A camera that disappears mid-scan leaves the viewfinder showing a frozen
+  // frame. Stopping is honest; the "scan from image" route stays available.
+  useEffect(() => {
+    session.onLost = () => setStatus((st) => (st === "live" ? "stopped" : st));
+    return () => {
+      session.onLost = null;
+    };
+  }, [session]);
+
   useEffect(() => { if (section !== "scan") session.stop(); }, [section]);
+
+  /**
+   * Two things happen to a camera while somebody is holding a phone.
+   *
+   * The screen turns: the browser keeps the stream alive but the video element
+   * is resized underneath it, and on a number of Android browsers the decoder
+   * then reads a frame that no longer matches what is on screen. Re-acquiring
+   * after the rotation settles gives the new orientation a clean stream.
+   *
+   * And the camera itself changes: a headset is unplugged, a Bluetooth webcam
+   * goes away, another app lets go of it. Listening for `devicechange` keeps
+   * the picker honest instead of offering a camera that is not there.
+   */
+  useEffect(() => {
+    let rotationTimer: number | undefined;
+    const onOrientation = () => {
+      if (codesRef.current) return; // a result is on screen; leave it alone
+      window.clearTimeout(rotationTimer);
+      // The viewport settles a beat after the event; restarting too early
+      // re-acquires against the old dimensions.
+      rotationTimer = window.setTimeout(() => {
+        if (document.hidden) return;
+        void start({ deviceId: deviceIdRef.current || undefined });
+      }, 350);
+    };
+    const onDevices = () => {
+      CameraSession.listCameras()
+        .then((list) => {
+          if (!alive.current) return;
+          setCams(list);
+          // The camera we were using is gone — fall back to whatever is left.
+          if (deviceIdRef.current && !list.some((d) => d.deviceId === deviceIdRef.current)) {
+            setDeviceId("");
+            if (statusRef.current === "live") void start({ facing });
+          }
+        })
+        .catch(() => undefined);
+    };
+    window.addEventListener("orientationchange", onOrientation);
+    navigator.mediaDevices?.addEventListener?.("devicechange", onDevices);
+    return () => {
+      window.clearTimeout(rotationTimer);
+      window.removeEventListener("orientationchange", onOrientation);
+      navigator.mediaDevices?.removeEventListener?.("devicechange", onDevices);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const stop = () => { autoStopped.current = false; session.stop(); setStatus("stopped"); setTorch(false); };
 
