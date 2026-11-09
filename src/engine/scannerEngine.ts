@@ -164,7 +164,15 @@ export interface CameraCaps {
   zoom: { min: number; max: number; step: number } | null;
 }
 
-type ExtCaps = MediaTrackCapabilities & { torch?: boolean; zoom?: { min: number; max: number; step: number } };
+type ExtCaps = MediaTrackCapabilities & {
+  torch?: boolean;
+  /** Chromium's spelling of the same thing */
+  fillLightMode?: string[];
+  zoom?: { min: number; max: number; step: number };
+};
+
+const fillLightSupported = (c: ExtCaps) => Array.isArray(c.fillLightMode) && c.fillLightMode.includes("flash");
+const torchSupported = (c: ExtCaps) => !!c.torch || fillLightSupported(c);
 
 export class CameraSession {
   stream: MediaStream | null = null;
@@ -221,17 +229,50 @@ export class CameraSession {
     } catch {
       /* unsupported */
     }
-    return { torch: !!caps.torch, zoom: caps.zoom ? { min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1 } : null };
+    return {
+      torch: torchSupported(caps),
+      zoom: caps.zoom ? { min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1 } : null,
+    };
   }
 
   currentDeviceId(): string | null {
     return this.stream?.getVideoTracks()[0]?.getSettings().deviceId ?? null;
   }
 
+  /**
+   * Switch the camera's light on or off.
+   *
+   * There are two spellings in the wild and a device usually only knows one:
+   * `torch` (the original constraint, still what most Android phones answer)
+   * and `fillLightMode: "flash" | "off"` (what Chromium on Android reports).
+   * Trying both is what makes the flash button work instead of silently doing
+   * nothing on the phones that use the newer one.
+   */
   async setTorch(on: boolean): Promise<void> {
     const track = this.stream?.getVideoTracks()[0];
     if (!track) return;
-    await track.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] });
+    let caps: ExtCaps = {};
+    try {
+      caps = (track.getCapabilities?.() ?? {}) as ExtCaps;
+    } catch {
+      /* unsupported */
+    }
+    if (caps.torch) {
+      await track.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] });
+      return;
+    }
+    if (fillLightSupported(caps)) {
+      await track.applyConstraints({ advanced: [{ fillLightMode: on ? "flash" : "off" } as MediaTrackConstraintSet] });
+      return;
+    }
+    // No capability to read: Chrome on older Android still honours `torch`
+    // even when it forgets to advertise it, so try before giving up.
+    try {
+      await track.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] });
+      return;
+    } catch {
+      await track.applyConstraints({ advanced: [{ fillLightMode: on ? "flash" : "off" } as MediaTrackConstraintSet] });
+    }
   }
 
   async setZoom(z: number): Promise<void> {

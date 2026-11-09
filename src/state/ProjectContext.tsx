@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DesignConfig, FormValues, Project, QrRecord, QrTypeDef } from "../core/types";
-import { DEFAULT_DESIGN, sanitizeDesign } from "../core/designDefaults";
+import { builtinLogoHref, DEFAULT_DESIGN, sanitizeDesign } from "../core/designDefaults";
 import { buildContent, defaultValues, TYPE_BY_ID, type BuildResult } from "../core/qrTypes";
 import { getLogoDataUrl, primeLogoCache, putSetting, saveAsset, saveQr } from "../db/db";
 import { blobToDataUrl, prepareLogoBlob } from "../engine/raster";
@@ -81,6 +81,13 @@ export function ProjectProvider({ initial, children }: { initial: Record<string,
 
   useEffect(() => {
     let alive = true;
+    // A negative id is one of the marks that ship with the app (see
+    // `builtinLogoHref`); anything else is a logo the user stored.
+    const builtin = builtinLogoHref(project.design.logoId);
+    if (builtin) {
+      setLogoHref(builtin);
+      return;
+    }
     if (project.design.logoId == null) {
       setLogoHref(null);
       return;

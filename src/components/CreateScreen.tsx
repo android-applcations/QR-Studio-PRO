@@ -17,22 +17,25 @@ import { PrintSheet } from "./PrintSheet";
 import BatchPanel from "./BatchPanel";
 
 // ---------- Type cards ----------
-const TypeCard = memo(function TypeCard({ def, onPick, big }: { def: QrTypeDef; onPick: (id: string, el: HTMLElement) => void; big?: boolean }) {
+/**
+ * One tile, the same for every category: a square card with the platform's mark
+ * and its name under it. The social grid used to be the only one laid out this
+ * way while the other categories fell back to a wide list row, which made half
+ * the create screen look like a different app. The description stays reachable
+ * as the tile's tooltip and accessible name.
+ */
+const TypeCard = memo(function TypeCard({ def, onPick }: { def: QrTypeDef; onPick: (id: string, el: HTMLElement) => void }) {
   const { t } = useApp();
   return (
     <button
       type="button"
       onClick={(e) => onPick(def.id, e.currentTarget)}
-      className={cn(
-        "press cv-card card group flex w-full text-start hover:border-brand/50",
-        big ? "flex-col items-center gap-2 px-2 py-3.5 text-center" : "items-center gap-3 p-3",
-      )}
+      title={t(def.desc)}
+      aria-label={`${t(def.title)} — ${t(def.desc)}`}
+      className="press cv-card card group flex aspect-square w-full flex-col items-center justify-center gap-2 px-1.5 py-3 text-center hover:border-brand/50"
     >
-      <TypeIcon icon={def.icon} size={big ? 52 : 44} />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[14px] font-semibold">{t(def.title)}</span>
-        {!big && <span className="block truncate text-xs text-muted">{t(def.desc)}</span>}
-      </span>
+      <TypeIcon icon={def.icon} size={46} />
+      <span className="line-clamp-2 w-full text-[12.5px] font-semibold leading-tight">{t(def.title)}</span>
     </button>
   );
 });
@@ -96,22 +99,15 @@ function Picker({ onPick }: { onPick: (id: string, el: HTMLElement) => void }) {
               const social = c.id === "social";
               return (
                 <section key={c.id} aria-label={t(c.title)}>
-                  {social ? (
-                    <div className="mb-3 overflow-hidden rounded-2xl border border-brand/30 bg-gradient-to-br from-brand/25 via-surface2 to-brand2/10 p-3.5">
-                      <div className="flex items-center gap-2">
-                        <Sparkles size={18} className="text-brand" />
-                        <h3 className="text-[15px] font-bold">{t(c.title)}</h3>
-                      </div>
-                      <p className="mt-0.5 text-xs text-muted">{t(["Dedicated forms with validation for every platform", "نماذج مخصصة مع تحقق لكل منصة"])}</p>
-                    </div>
-                  ) : (
-                    <div className="mb-2 px-1">
+                  <div className={cn("mb-2.5 overflow-hidden rounded-2xl border p-3", social ? "border-brand/25 bg-gradient-to-br from-brand/15 via-surface2 to-brand2/10" : "border-line bg-surface2/40")}>
+                    <div className="flex items-center gap-2">
+                      {social && <Sparkles size={16} className="shrink-0 text-brand" />}
                       <h3 className="text-[14px] font-bold">{t(c.title)}</h3>
-                      <p className="text-xs text-muted">{t(c.desc)}</p>
                     </div>
-                  )}
-                  <div className={social ? "grid grid-cols-3 gap-2.5 sm:grid-cols-4 lg:grid-cols-6" : "grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-3"}>
-                    {list.map((d) => <TypeCard key={d.id} def={d} onPick={onPick} big={social} />)}
+                    <p className="mt-0.5 text-xs text-muted">{social ? t(["Dedicated forms with validation for every platform", "نماذج مخصصة مع تحقق لكل منصة"]) : t(c.desc)}</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 lg:grid-cols-6">
+                    {list.map((d) => <TypeCard key={d.id} def={d} onPick={onPick} />)}
                   </div>
                 </section>
               );

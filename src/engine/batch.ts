@@ -4,6 +4,7 @@ import { buildContent, TYPE_BY_ID } from "../core/qrTypes";
 import { renderQrSvg, QrCapacityError } from "./designEngine";
 import { canvasToBlob, rasterize } from "./raster";
 import { sanitizeFilename } from "./exportEngine";
+import { generateOffThread, rasterizeOffThread } from "./renderClient";
 
 export type BatchKind = "text" | "url" | "phone" | "email";
 const KIND_FIELD: Record<BatchKind, string> = { text: "text", url: "url", phone: "phone", email: "to" };
@@ -87,18 +88,54 @@ export function buildRows(table: string[][], kind: BatchKind, contentCol: number
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 
-/** Generates vector codes in small slices, yielding to the UI between slices. */
-export async function generateBatch(
-  rows: BatchRow[],
+/**
+ * Render every row, off the UI thread when the browser allows it.
+ *
+ * Vector generation is pure work on strings, which is exactly what a worker is
+ * for: a 500-row batch used to hold the whole interface still for the seconds it
+ * took. When no worker can run (older Safari, a locked-down web view) the loop
+ * below does the same job on the main thread, yielding regularly so the cancel
+ * button still answers.
+ */
+async function renderAll(
+  valid: BatchRow[],
   design: DesignConfig,
   logoHref: string | null,
   autoName: string,
   onProgress: (done: number, total: number) => void,
   cancel: { cancelled: boolean },
 ): Promise<{ items: GeneratedItem[]; failed: BatchRow[] }> {
-  const valid = rows.filter((r) => !r.error);
   const items: GeneratedItem[] = [];
   const failed: BatchRow[] = [];
+
+  const off = await generateOffThread(
+    valid.map((r) => ({ line: r.line, name: r.name, content: r.content })),
+    design,
+    logoHref,
+    autoName,
+    onProgress,
+  );
+  if (off && !cancel.cancelled) {
+    const bad = new Set(off.failedLines);
+    for (const r of valid) {
+      if (bad.has(r.line)) failed.push({ ...r, error: ["Generation failed", "فشل التوليد"] });
+    }
+    // Keep the caller's row order and its naming.
+    const byLine = new Map<number, GeneratedItem>();
+    let n = 0;
+    for (const r of valid) {
+      const it = off.items[n++];
+      if (!it || bad.has(r.line)) continue;
+      byLine.set(r.line, { ...it, name: r.name || it.name });
+    }
+    for (const r of valid) {
+      const it = byLine.get(r.line);
+      if (it) items.push(it);
+    }
+    onProgress(valid.length, valid.length);
+    return { items, failed };
+  }
+
   for (let i = 0; i < valid.length; i++) {
     if (cancel.cancelled) break;
     const r = valid[i];
@@ -115,6 +152,19 @@ export async function generateBatch(
   }
   onProgress(valid.length, valid.length);
   return { items, failed };
+}
+
+/** Generates vector codes in small slices, yielding to the UI between slices. */
+export async function generateBatch(
+  rows: BatchRow[],
+  design: DesignConfig,
+  logoHref: string | null,
+  autoName: string,
+  onProgress: (done: number, total: number) => void,
+  cancel: { cancelled: boolean },
+): Promise<{ items: GeneratedItem[]; failed: BatchRow[] }> {
+  const valid = rows.filter((r) => !r.error);
+  return renderAll(valid, design, logoHref, autoName, onProgress, cancel);
 }
 
 export type ZipFormat = "png" | "jpg" | "svg";
@@ -134,10 +184,16 @@ export async function buildZip(
     const n = (used.get(base) ?? 0) + 1;
     used.set(base, n);
     const file = `${n > 1 ? `${base}-${n}` : base}.${format}`;
-    if (format === "svg") zip.file(file, it.svg);
-    else {
-      const canvas = await rasterize(it.svg, size, (size * it.height) / it.width, "#ffffff");
-      zip.file(file, await canvasToBlob(canvas, format === "jpg" ? "image/jpeg" : "image/png", 0.95));
+    if (format === "svg") {
+      zip.file(file, it.svg);
+    } else {
+      const mime = format === "jpg" ? "image/jpeg" : "image/png";
+      // Rasterising is the expensive half of a batch export, so it goes to the
+      // worker when one is available; `null` means do it here instead.
+      const blob =
+        (await rasterizeOffThread(it.svg, size, Math.round((size * it.height) / it.width), "#ffffff", mime, 0.95)) ??
+        (await canvasToBlob(await rasterize(it.svg, size, (size * it.height) / it.width, "#ffffff"), mime, 0.95));
+      zip.file(file, blob);
     }
     manifest.push([file, it.name, it.content].map((c) => `"${c.replace(/"/g, '""')}"`).join(","));
     onProgress(i + 1, items.length);

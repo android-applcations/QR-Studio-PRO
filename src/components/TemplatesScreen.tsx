@@ -1,7 +1,7 @@
 import { memo, useState } from "react";
 import { Plus, Star, Trash2 } from "lucide-react";
 import type { DesignConfig, TemplateRecord } from "../core/types";
-import { BUILTIN_TEMPLATES, designFromTemplate } from "../core/designDefaults";
+import { BUILTIN_TEMPLATES, builtinLogoHref, designFromTemplate } from "../core/designDefaults";
 import { T } from "../core/i18n";
 import { addTemplate, deleteTemplate, listTemplates } from "../db/db";
 import { useApp } from "../state/AppContext";
@@ -30,15 +30,18 @@ const TemplateCard = memo(function TemplateCard({ name, design, content, logo, o
 
 export default function TemplatesScreen() {
   const { t, dataVersion, bumpData, toast, fail, go, confirm } = useApp();
-  const { project, build, logoHref, replaceDesign } = useProject();
+  const { project, build, logoHref, replaceDesign, selectType } = useProject();
   const { data: mine } = useAsyncList(listTemplates, dataVersion);
   const logos = useLogoMap(mine.map((m) => m.design_config.logoId));
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const content = build.valid ? build.content : SAMPLE;
 
-  const apply = (d: DesignConfig, label: string) => {
+  const apply = (d: DesignConfig, label: string, typeId?: string) => {
     replaceDesign(d);
+    // A template that is meant for one kind of code (Sham Cash, Wi-Fi…) is
+    // only half applied if the project is still a website link underneath.
+    if (typeId) selectType(typeId);
     toast([`Applied “${label}”`, `تم تطبيق «${label}»`]);
     go("design");
   };
@@ -87,7 +90,10 @@ export default function TemplatesScreen() {
           <div className="anim-fade-up grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
             {BUILTIN_TEMPLATES.map((b) => {
               const d = designFromTemplate(b.design, { logoId: project.design.logoId, size: project.design.size });
-              return <TemplateCard key={b.id} name={t(b.name)} design={d} content={content} logo={d.logoId != null ? logoHref : null} onUse={() => apply(d, t(b.name))} />;
+              // A built-in mark resolves to its own file; a stored one only
+              // exists on the project that owns it.
+              const previewLogo = d.logoId != null ? builtinLogoHref(d.logoId) ?? (d.logoId === project.design.logoId ? logoHref : null) : null;
+              return <TemplateCard key={b.id} name={t(b.name)} design={d} content={content} logo={previewLogo} onUse={() => apply(d, t(b.name), b.typeId)} />;
             })}
           </div>
         </section>

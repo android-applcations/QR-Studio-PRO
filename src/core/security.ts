@@ -13,6 +13,75 @@ const UNSAFE = ["javascript", "data", "vbscript", "file", "blob", "about", "view
 const SAFE_APP = ["tel", "mailto", "sms", "smsto", "geo", "bitcoin", "litecoin", "ethereum", "upi", "wifi"];
 const SHORTENERS = /^(bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|ow\.ly|cutt\.ly|rb\.gy|shorturl\.at|tiny\.cc|buff\.ly|rebrand\.ly)$/i;
 
+/**
+ * Names a fake login page likes to borrow.
+ *
+ * Short and generic words ("bank", "mtn") are deliberately absent — matching
+ * those flags ordinary domains and the warning stops meaning anything.
+ */
+const BRANDS: Record<string, string[]> = {
+  paypal: ["paypal.com", "paypal.me"],
+  google: ["google.com"],
+  apple: ["apple.com"],
+  microsoft: ["microsoft.com", "live.com", "outlook.com"],
+  amazon: ["amazon.com", "amazon.co.uk", "amazon.ae", "amazon.sa", "amazon.eg"],
+  netflix: ["netflix.com"],
+  instagram: ["instagram.com"],
+  facebook: ["facebook.com", "fb.com", "messenger.com"],
+  whatsapp: ["whatsapp.com", "wa.me"],
+  telegram: ["telegram.me", "telegram.org", "t.me"],
+  twitter: ["twitter.com", "x.com"],
+  linkedin: ["linkedin.com"],
+  snapchat: ["snapchat.com"],
+  tiktok: ["tiktok.com"],
+  hsbc: ["hsbc.com"],
+  westernunion: ["westernunion.com"],
+  moneygram: ["moneygram.com"],
+  shamcash: ["shamcash.sy", "shamcash.com"],
+};
+
+/** `amazon.co.uk` owns three labels, not two — `co.uk` is not the domain. */
+const TWO_PART_SUFFIX = /^(co|com|org|net|gov|edu|ac|sch)\.[a-z]{2}$/;
+
+function registrableDomain(host: string): string {
+  const labels = host.toLowerCase().split(".").filter(Boolean);
+  if (labels.length >= 3 && TWO_PART_SUFFIX.test(labels.slice(-2).join("."))) return labels.slice(-3).join(".");
+  return labels.slice(-2).join(".");
+}
+
+/** Leet-speak back to letters, so `paypa1` and `g00gle` are caught too. */
+const deLeet = (v: string) =>
+  v
+    .toLowerCase()
+    .replace(/[_-]/g, "")
+    .replace(/[013457]/g, (d) => ({ "0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "7": "t" })[d] ?? d);
+
+/**
+ * Does this hostname pretend to be somebody else?
+ *
+ * The two classic shapes: a trusted name parked in the subdomain
+ * (`paypal.com.login-verify.net` — the domain that actually receives you is the
+ * one on the right), and a trusted name misspelled into the domain itself
+ * (`paypa1.com`, `secure-paypal.com`).
+ *
+ * A warning, never a block: the point is to make the user look twice at the
+ * address before opening it, not to decide for them.
+ */
+export function impersonation(host: string): boolean {
+  const labels = host.toLowerCase().split(".").filter(Boolean);
+  if (labels.length < 2) return false;
+  const reg = registrableDomain(host);
+  const sub = labels.slice(0, labels.length - reg.split(".").length).join(".");
+  const flat = deLeet(reg);
+  for (const [brand, own] of Object.entries(BRANDS)) {
+    // A trusted name anywhere to the left of the real domain.
+    if (sub.includes(brand)) return true;
+    // The domain borrows the name but is not one the brand actually owns.
+    if ((reg.includes(brand) || flat.includes(brand)) && !own.includes(reg)) return true;
+  }
+  return false;
+}
+
 /** Static analysis of scanned content: never executes or opens anything. */
 export function analyzeLink(content: string): LinkInfo {
   const s = content.trim();
@@ -38,6 +107,11 @@ export function analyzeLink(content: string): LinkInfo {
     if (SHORTENERS.test(host)) warnings.push(["Shortened link: the real destination is hidden.", "رابط مختصر: الوجهة الحقيقية مخفية."]);
     if (u.username || u.password) warnings.push(["The link contains embedded credentials.", "الرابط يحتوي على بيانات دخول مضمّنة."]);
     if (s.length > 400) warnings.push(["Very long link.", "رابط طويل جداً."]);
+    if (impersonation(host))
+      warnings.push([
+        "This address borrows the name of a well-known service but is not it. Check every character before opening.",
+        "هذا العنوان يستعير اسم خدمة معروفة ولكنه ليس لها. تحقّق من كل حرف قبل الفتح.",
+      ]);
     return { kind: "web", href: u.href, host: u.host, https: scheme === "https", openable: true, warnings };
   }
   if (SAFE_APP.includes(scheme) && scheme !== "wifi") {

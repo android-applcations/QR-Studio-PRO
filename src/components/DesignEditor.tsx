@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Download, Frame, ImagePlus, Palette, Redo2, RotateCcw, Shapes, SlidersHorizontal, Star, Trash2, Undo2, Upload } from "lucide-react";
 import type { DesignConfig, DotStyle, EccLevel, EyeBallStyle, EyeFrameStyle, FontFamilyKey, FrameStyle } from "../core/types";
 import { DEFAULT_DESIGN } from "../core/designDefaults";
@@ -103,6 +103,34 @@ export default function DesignEditor() {
       fail(e);
     }
   };
+
+  /*
+   * Ctrl/Cmd+Z and Ctrl+Y (or Ctrl+Shift+Z) are the shortcuts every editor has
+   * taught people, so the buttons in the header are not the only way back.
+   * Skipped while a text field has focus, where they mean "undo my typing".
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const el = document.activeElement;
+      const typing =
+        !!el &&
+        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || (el as HTMLElement).isContentEditable);
+      if (typing) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) {
+        if (!canUndo) return;
+        e.preventDefault();
+        undo();
+      } else if (k === "y" || (k === "z" && e.shiftKey)) {
+        if (!canRedo) return;
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo, canUndo, canRedo]);
 
   const exportItem = { content, design: d, logoHref, name: project.name || t(type.title), type: project.typeId };
   const grad = d.gradient;

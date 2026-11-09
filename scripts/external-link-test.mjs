@@ -117,6 +117,34 @@ const goSection = (i) =>
     navs[navs.length - 1].querySelectorAll("button")[i].click();
   }, i);
 
+/**
+ * Flip a setting by its label. Settings live in a sheet, so open it, flip the
+ * switch, and close again — the way a user would.
+ */
+async function setToggle(labelText, want) {
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('button[aria-label]')].find((e) => /settings|الإعدادات/i.test(e.getAttribute("aria-label") || ""));
+    b?.click();
+  });
+  await sleep(900);
+  const now = await page.evaluate((labelText) => {
+    const sw = [...document.querySelectorAll('button[role="switch"]')].find((e) => (e.textContent || "").includes(labelText));
+    if (!sw) return null;
+    const on = sw.getAttribute("aria-checked") === "true";
+    return { on, flipped: on };
+  }, labelText);
+  if (now && now.on !== want) {
+    await page.evaluate((labelText) => {
+      const sw = [...document.querySelectorAll('button[role="switch"]')].find((e) => (e.textContent || "").includes(labelText));
+      sw?.click();
+    }, labelText);
+    await sleep(500);
+  }
+  await page.keyboard.press("Escape");
+  await sleep(900);
+  return now;
+}
+
 /** Build a QR inside the app for `value` and save it as a PNG. */
 let lastReason = "";
 const reasons = [];
@@ -342,6 +370,38 @@ try {
     check(`${c.name}: nothing else is fired behind the OS's back`, hrefs.length === 1, JSON.stringify(hrefs));
     check(`${c.name}: the intent can fall back to the browser`, hrefs[0]?.includes(`S.browser_fallback_url=${enc(c.value)}`) === true, hrefs[0]);
   }
+
+  // An `intent:` URI is a Chromium feature. On Firefox for Android (and the OEM
+  // mini-browsers) it is just an unknown scheme, and the system answers out loud
+  // that no app can open it — which is the message this whole design avoids.
+  const FIREFOX_ANDROID_UA =
+    "Mozilla/5.0 (Android 14; Mobile; rv:130.0) Gecko/130.0 Firefox/130.0";
+  await page.setUserAgent(FIREFOX_ANDROID_UA);
+  const ffFile = join(tmpdir(), "qr-app-firefox.png");
+  if (await makeQr("Website", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", ffFile)) {
+    const { events } = await scanAndOpen(ffFile);
+    const hrefs = events.map((e) => e.href || "");
+    check(
+      "Firefox/Android: no intent, the plain https link is handed over",
+      hrefs.length === 1 && hrefs[0] === "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      JSON.stringify(hrefs),
+    );
+  }
+
+  // The switch exists for exactly this: a device that still misbehaves.
+  await page.setUserAgent(ANDROID_UA);
+  await setToggle("Open in the app when it is installed", false);
+  const offFile = join(tmpdir(), "qr-app-off.png");
+  if (await makeQr("Website", "https://www.instagram.com/abuomar/", offFile)) {
+    const { events } = await scanAndOpen(offFile);
+    const hrefs = events.map((e) => e.href || "");
+    check(
+      "deep links off: every link goes to the browser",
+      hrefs.length === 1 && hrefs[0] === "https://www.instagram.com/abuomar/",
+      JSON.stringify(hrefs),
+    );
+  }
+  await setToggle("Open in the app when it is installed", true);
 
   // iOS has no intents: the scheme first, the browser only if nothing answers.
   await page.setUserAgent(IOS_UA);

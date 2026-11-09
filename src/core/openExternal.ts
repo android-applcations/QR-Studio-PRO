@@ -112,8 +112,8 @@ export function openExternal(rawHref: string): OpenHandoff {
  * So a YouTube link opens YouTube, and on a phone without YouTube it opens the
  * default browser at exactly the same video.
  */
-export function openInAppOrBrowser(webUrl: string): OpenHandoff {
-  const app = appHandoff(webUrl);
+export function openInAppOrBrowser(webUrl: string, openInApp = true): OpenHandoff {
+  const app = appHandoff(webUrl, openInApp);
   if (!app) return openExternal(webUrl);
 
   const result = openExternal(app.url);

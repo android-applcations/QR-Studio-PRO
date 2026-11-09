@@ -1,8 +1,8 @@
-import { Component, Suspense, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
+import { Component, Suspense, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { Clock, HardDrive, LayoutTemplate, Library, Palette, QrCode, ScanLine, Settings, Sparkles } from "lucide-react";
 import type { SectionId } from "./core/types";
 import { T } from "./core/i18n";
-import { loadSettings, storageEstimate } from "./db/db";
+import { loadSettings, pruneOldest, storageAudit, storageEstimate } from "./db/db";
 import { formatBytes } from "./core/i18n";
 import { AppProvider, useApp } from "./state/AppContext";
 import { ProjectProvider } from "./state/ProjectContext";
@@ -95,11 +95,70 @@ function StorageChip() {
   );
 }
 
+/**
+ * Warn before the browser runs out of room, and offer the two ways out.
+ *
+ * Codes, logos, scan history and the offline cache all share one bucket, and a
+ * browser that fills it starts failing writes silently — a code you saved
+ * simply is not there next time. So once the bucket is nearly full we say so,
+ * with a backup button and a "clean up" button on the same toast.
+ */
+function useStorageGuard() {
+  const { t, dataVersion, toast, fail } = useApp();
+  const warned = useRef(false);
+  useEffect(() => {
+    if (warned.current) return;
+    let alive = true;
+    const id = setTimeout(async () => {
+      try {
+        const a = await storageAudit();
+        if (!alive || a.percent === null || a.percent < 85) return;
+        warned.current = true;
+        toast(
+          t([
+            `Storage is ${Math.round(a.percent)}% full. Export a backup or clear old codes to keep saving.`,
+            `التخزين ممتلئ بنسبة ${Math.round(a.percent)}٪. صدّر نسخة احتياطية أو احذف الرموز القديمة لتتمكن من الحفظ.`,
+          ]),
+          "info",
+          {
+            label: t(["Clean old codes", "تنظيف الرموز القديمة"]),
+            run: async () => {
+              try {
+                const gone = await pruneOldest();
+                bumpAll();
+                toast(
+                  gone.codes || gone.history
+                    ? t([`Freed space: removed ${gone.codes} old codes and ${gone.history} history entries.`, `تم تحرير المساحة: حُذف ${gone.codes} رمزاً قديماً و${gone.history} من السجل.`])
+                    : t(["Nothing old enough to remove — favourites are kept.", "لا شيء قديم للحذف — الرموز المفضلة محفوظة."]),
+                  "info",
+                );
+              } catch (e) {
+                fail(e);
+              }
+            },
+          },
+        );
+      } catch {
+        /* storage audit is best-effort */
+      }
+    }, 2500);
+    return () => {
+      alive = false;
+      clearTimeout(id);
+    };
+  }, [dataVersion, t, toast, fail]);
+}
+
+/** Re-render every list once storage has been cleaned. */
+let bumpAll = () => {};
+
 function Shell() {
-  const { t, lang, setLang, section, go, setSettingsOpen } = useApp();
+  const { t, lang, setLang, section, go, setSettingsOpen, bumpData } = useApp();
   // True only once a new version has finished downloading and is waiting.
   const { needRefresh } = usePwa();
   const [boundaryKey, setBoundaryKey] = useState(0);
+  useStorageGuard();
+  bumpAll = bumpData;
 
   // Only the section change makes a sound: navigating is a distinct action.
   const navigate = (id: SectionId) => {

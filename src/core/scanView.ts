@@ -44,6 +44,8 @@ const L = {
   event: ["Event", "المناسبة"],
   starts: ["Starts", "البداية"],
   ends: ["Ends", "النهاية"],
+  duration: ["Duration", "المدة"],
+  allDay: ["All day", "طوال اليوم"],
   location: ["Location", "الموقع"],
   coordinates: ["Coordinates", "الإحداثيات"],
   link: ["Link", "الرابط"],
@@ -68,6 +70,12 @@ const L = {
   video: ["Video", "الفيديو"],
   channel: ["Channel", "القناة"],
   invite: ["Invite code", "رمز الدعوة"],
+  product: ["Product", "المنتج"],
+  price: ["Price", "السعر"],
+  sku: ["SKU / code", "رمز المنتج"],
+  track: ["Track", "المقطع"],
+  album: ["Album", "الألبوم"],
+  artist: ["Artist", "الفنان"],
   walletCode: ["Wallet code", "رمز المحفظة"],
   accountNumber: ["Account number", "رقم الحساب"],
   identifier: ["Identifier", "المعرّف"],
@@ -117,13 +125,69 @@ function cleanAdr(v: string): string {
     .join(", ");
 }
 
-/** 20260131T120000 / 20260131 → something a human can read. */
+/**
+ * Parse an iCalendar date: `20260131T120000`, `20260131T120000Z` or `20260131`.
+ * Returns null when the value is not one, so callers can fall back to the text.
+ */
+function parseIcsDate(v: string): { date: Date; allDay: boolean; utc: boolean } | null {
+  const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?$/.exec(v.trim());
+  if (!m) return null;
+  const [, y, mo, d, h, mi, sec, z] = m;
+  const allDay = h === undefined;
+  const utc = z === "Z";
+  const date = utc
+    ? new Date(Date.UTC(+y, +mo - 1, +d, +(h ?? 0), +(mi ?? 0), +(sec ?? 0)))
+    : new Date(+y, +mo - 1, +d, +(h ?? 0), +(mi ?? 0), +(sec ?? 0));
+  return Number.isNaN(date.getTime()) ? null : { date, allDay, utc };
+}
+
+/** The app's language, for date formatting. Absent in tests: falls back. */
+const docLang = () => (typeof document === "undefined" ? "" : document.documentElement.lang || "");
+
+/**
+ * 20260131T120000 → "Sun 8 Nov 2026, 12:00" (in the reader's own locale).
+ *
+ * The old version printed `2026/11/08 12:00`, which is machine order, not
+ * reading order — you had to decode it before you knew when the event was.
+ */
 function prettyIcsDate(v: string): string {
-  const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2}))?/.exec(v.trim());
-  if (!m) return v.trim();
-  const [, y, mo, d, h, mi] = m;
-  const date = `${y}/${mo}/${d}`;
-  return h ? `${date} ${h}:${mi ?? "00"}` : date;
+  const parsed = parseIcsDate(v);
+  if (!parsed) return v.trim();
+  const { date, allDay } = parsed;
+  try {
+    const fmt = new Intl.DateTimeFormat(docLang() || undefined, {
+      weekday: allDay ? undefined : "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      ...(allDay ? {} : { hour: "2-digit", minute: "2-digit" }),
+    });
+    return fmt.format(date);
+  } catch {
+    const p = (n: number) => String(n).padStart(2, "0");
+    return allDay
+      ? `${date.getFullYear()}/${p(date.getMonth() + 1)}/${p(date.getDate())}`
+      : `${date.getFullYear()}/${p(date.getMonth() + 1)}/${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}`;
+  }
+}
+
+/** "1h 30min" — how long an event lasts, the thing you actually scan for. */
+function durationBetween(startRaw: string, endRaw: string): string | null {
+  const a = parseIcsDate(startRaw);
+  const b = parseIcsDate(endRaw);
+  if (!a || !b) return null;
+  // An all-day event ending the next midnight is one day, not 24 hours.
+  if (a.allDay && b.allDay) {
+    const days = Math.round((b.date.getTime() - a.date.getTime()) / 86400000);
+    return days > 0 ? `${days} ${days === 1 ? "day" : "days"}` : null;
+  }
+  const mins = Math.round((b.date.getTime() - a.date.getTime()) / 60000);
+  if (mins <= 0) return null;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h && m) return `${h}h ${m}min`;
+  if (h) return `${h}h`;
+  return `${m}min`;
 }
 
 function queryOf(uri: string): URLSearchParams {
@@ -172,16 +236,48 @@ function eventFields(content: string): ScanField[] {
     const m = new RegExp(`^${k}[^:]*:(.*)$`, "mi").exec(content);
     return m ? m[1].trim() : "";
   };
+  // iCalendar escapes `\ , ;` inside text, so a title with a comma came back
+  // with the backslash still in it.
+  const text = (v: string) => unescVcard(v).replace(/\\n/gi, "\n");
   const title = read("SUMMARY");
-  if (title) out.push({ label: L.event, value: title });
+  if (title) out.push({ label: L.event, value: text(title) });
   const start = read("DTSTART");
-  if (start) out.push({ label: L.starts, value: prettyIcsDate(start), ltr: true });
   const end = read("DTEND");
+  // "When is it?" first — the start is the one thing somebody scanning an
+  // event actually came for.
+  if (start) out.push({ label: L.starts, value: prettyIcsDate(start), ltr: true });
   if (end) out.push({ label: L.ends, value: prettyIcsDate(end), ltr: true });
+  const dur = durationBetween(start, end);
+  if (dur) out.push({ label: L.duration, value: dur, ltr: true });
   const loc = read("LOCATION");
-  if (loc) out.push({ label: L.location, value: loc.replace(/\\n/g, " ") });
+  if (loc) out.push({ label: L.location, value: text(loc) });
   const desc = read("DESCRIPTION");
-  if (desc) out.push({ label: L.note, value: desc.replace(/\\n/g, " "), multiline: true });
+  if (desc) out.push({ label: L.note, value: text(desc), multiline: true });
+  return out;
+}
+
+/**
+ * Product info is stored as plain lines, so scanning one used to show a single
+ * "Content" block. Read the lines back into the fields they came from.
+ */
+function productFields(content: string): ScanField[] {
+  const lines = content.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const take = (re: RegExp) => {
+    const i = lines.findIndex((l) => re.test(l));
+    return i < 0 ? "" : (lines.splice(i, 1)[0] ?? "");
+  };
+  const link = take(/^https?:\/\//i);
+  const sku = take(/^SKU:/i).replace(/^SKU:/i, "").trim();
+  // "19.99 USD", "1,200 SYP" — digits, then an optional currency word.
+  const price = take(/^[\d][\d.,\s]*\s*[A-Za-z]{0,6}$/);
+  const name = lines.shift() ?? "";
+  const desc = lines.join("\n");
+  const out: ScanField[] = [];
+  if (name) out.push({ label: L.product, value: name });
+  if (price) out.push({ label: L.price, value: price, ltr: true });
+  if (sku) out.push({ label: L.sku, value: sku, ltr: true });
+  if (desc) out.push({ label: L.note, value: desc, multiline: true });
+  if (link) out.push({ label: L.website, value: link, ltr: true, multiline: true });
   return out;
 }
 
@@ -391,10 +487,37 @@ const PLATFORMS: PlatformView[] = [
       return phone ? { label: L.number, value: "+" + phone } : null;
     },
   },
-  { host: /(^|\.)open\.spotify\.com$/i, name: ["Spotify", "سبوتيفاي"] },
-  { host: /(^|\.)soundcloud\.com$/i, name: ["SoundCloud", "ساوند كلاود"] },
-  { host: /(^|\.)vimeo\.com$/i, name: ["Vimeo", "فيميو"] },
-  { host: /(^|\.)paypal\.(com|me)$/i, name: ["PayPal", "باي بال"] },
+  {
+    // A Spotify id is opaque, so naming the kind of thing it is (track, album,
+    // artist) is the useful part — better than a bare run of characters.
+    host: /(^|\.)open\.spotify\.com$/i,
+    name: ["Spotify", "سبوتيفاي"],
+    pick: (u) => {
+      const [kind, id] = u.pathname.split("/").filter(Boolean);
+      if (!kind || !id) return null;
+      const label = kind === "track" ? L.track : kind === "album" ? L.album : kind === "artist" ? L.artist : null;
+      return label ? { label, value: id.split("?")[0] } : null;
+    },
+  },
+  {
+    host: /(^|\.)soundcloud\.com$/i,
+    name: ["SoundCloud", "ساوند كلاود"],
+    pick: (u) => {
+      const parts = u.pathname.split("/").filter(Boolean);
+      // /artist/track-names-here  —  a single segment is the artist's profile.
+      return parts.length > 1 && !["you", "discover", "stream", "charts", "sets"].includes(parts[0].toLowerCase())
+        ? { label: L.track, value: decodeSeg(parts.slice(1).join("/")).replace(/-/g, " ") }
+        : parts.length === 1
+          ? { label: L.artist, value: decodeSeg(parts[0]) }
+          : null;
+    },
+  },
+  { host: /(^|\.)vimeo\.com$/i, name: ["Vimeo", "فيميو"], pick: (u) => (firstSeg(u) ? { label: L.video, value: firstSeg(u) } : null) },
+  {
+    host: /(^|\.)paypal\.(com|me)$/i,
+    name: ["PayPal", "باي بال"],
+    pick: (u) => (u.hostname.endsWith("paypal.me") && firstSeg(u) ? { label: L.username, value: "@" + firstSeg(u) } : null),
+  },
 ];
 
 const SHAMCASH_CODE = /^[A-Za-z0-9]{32}$/;
@@ -470,6 +593,9 @@ export function describeScan(content: string, typeId: string): ScanField[] {
         break;
       case "shamcash":
         fields = shamcashFields(s);
+        break;
+      case "product":
+        fields = productFields(s);
         break;
       default:
         fields = [];

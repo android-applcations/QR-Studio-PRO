@@ -292,6 +292,63 @@ export async function storageEstimate(): Promise<{ usage: number; quota: number 
   return null;
 }
 
+/**
+ * How full the browser's storage for this origin is.
+ *
+ * `quota` is the whole bucket the browser gave us, not a hard promise, and some
+ * browsers report nothing at all — hence `percent: null` when we cannot know.
+ */
+export interface StorageAudit {
+  usage: number;
+  quota: number;
+  /** 0–100, or null when the browser will not say */
+  percent: number | null;
+  /** saved codes currently taking up space */
+  codes: number;
+  /** entries in the scan history */
+  history: number;
+}
+
+export async function storageAudit(): Promise<StorageAudit> {
+  const [est, codes, history] = await Promise.all([storageEstimate(), db.qr_codes.count(), db.scan_history.count()]);
+  const usage = est?.usage ?? 0;
+  const quota = est?.quota ?? 0;
+  return { usage, quota, percent: quota > 0 ? Math.min(100, (usage / quota) * 100) : null, codes, history };
+}
+
+/**
+ * Free space the careful way: drop the oldest codes that are not favourites,
+ * and trim the scan history to its newest entries.
+ *
+ * `keep` is a floor, not a target — nothing is deleted while there are fewer
+ * saved codes than that, so an audit can call this without fear.
+ */
+export async function pruneOldest(keep = 200, keepHistory = 300): Promise<{ codes: number; history: number }> {
+  const [codes, history] = await Promise.all([
+    db.qr_codes.orderBy("created_at").reverse().toArray(),
+    db.scan_history.count(),
+  ]);
+  let removedCodes = 0;
+  if (codes.length > keep) {
+    // Newest first, so the tail is the oldest — and favourites are never touched.
+    const doomed = codes.slice(keep).filter((c) => !c.favorite).map((c) => c.id).filter((id): id is number => typeof id === "number");
+    if (doomed.length) {
+      await deleteQr(doomed);
+      removedCodes = doomed.length;
+    }
+  }
+  let removedHistory = 0;
+  if (history > keepHistory) {
+    const oldest = await db.scan_history.orderBy("scanned_at").limit(history - keepHistory).toArray();
+    const ids = oldest.map((h) => h.id).filter((id): id is number => typeof id === "number");
+    if (ids.length) {
+      await deleteHistory(ids);
+      removedHistory = ids.length;
+    }
+  }
+  return { codes: removedCodes, history: removedHistory };
+}
+
 export async function requestPersistence(): Promise<boolean> {
   try {
     return (await navigator.storage?.persist?.()) ?? false;

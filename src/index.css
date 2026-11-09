@@ -31,19 +31,91 @@
   color-scheme: dark;
 }
 
+/**
+ * Light mode.
+ *
+ * The old values were a flat blue-grey: every surface the same, almost no depth,
+ * and a background so close to the cards that the layout had no shape. This is
+ * built the way a light UI has to be — ink that is dark but never black, a
+ * tinted page behind cards that are genuinely lighter than it, two soft ambient
+ * washes for colour, and real shadows instead of hairline borders doing all the
+ * separation work.
+ */
 [data-theme="light"] {
-  --c-bg: #f2f3f8;
+  --c-bg: #eef1f9;
   --c-surface: #ffffff;
-  --c-surface2: #eceef6;
-  --c-line: rgba(15, 18, 40, 0.1);
-  --c-fg: #14172b;
-  --c-muted: #5d6280;
-  --c-brand: #5b4bff;
-  --c-brand2: #0891b2;
-  --c-ok: #059669;
-  --c-warn: #b45309;
-  --c-bad: #dc2626;
+  --c-surface2: #f4f6fc;
+  --c-line: rgba(19, 26, 61, 0.1);
+  --c-fg: #131a35;
+  --c-muted: #5f6786;
+  --c-brand: #5b45f5;
+  --c-brand2: #0b84b8;
+  --c-ok: #0d8a63;
+  --c-warn: #b06407;
+  --c-bad: #d3353c;
   color-scheme: light;
+}
+
+/* Two very soft washes of brand colour so the page has warmth of its own. */
+[data-theme="light"] body {
+  background-image:
+    radial-gradient(1150px 620px at 8% -10%, rgba(91, 69, 245, 0.13), transparent 62%),
+    radial-gradient(950px 560px at 102% -4%, rgba(11, 132, 184, 0.11), transparent 58%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+/*
+ * Depth. A border alone reads as a wireframe in a light UI; a low, wide shadow
+ * is what makes a card sit above the page.
+ */
+[data-theme="light"] .card {
+  border-color: rgba(19, 26, 61, 0.07);
+  box-shadow:
+    0 1px 2px rgba(19, 26, 61, 0.04),
+    0 10px 26px -14px rgba(19, 26, 61, 0.18);
+}
+
+/* Inputs read as slightly pressed into the card that holds them. */
+[data-theme="light"] input:not([type="color"]):not([type="range"]),
+[data-theme="light"] textarea,
+[data-theme="light"] select {
+  background-color: #fbfcfe;
+  border-color: rgba(19, 26, 61, 0.12);
+  box-shadow: inset 0 1px 2px rgba(19, 26, 61, 0.04);
+}
+[data-theme="light"] input:not([type="color"]):focus-visible,
+[data-theme="light"] textarea:focus-visible,
+[data-theme="light"] select:focus-visible {
+  border-color: var(--c-brand);
+  box-shadow: 0 0 0 3px rgba(91, 69, 245, 0.14);
+  outline: none;
+}
+
+/* The app bar and the two nav rails read as frosted glass over the wash. */
+[data-theme="light"] header,
+[data-theme="light"] nav,
+[data-theme="light"] [role="dialog"] {
+  background-color: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  border-color: rgba(19, 26, 61, 0.08);
+}
+[data-theme="light"] header,
+[data-theme="light"] nav[aria-label] {
+  box-shadow: 0 6px 22px -16px rgba(19, 26, 61, 0.4);
+}
+
+/* Primary buttons carry the brand as a gradient instead of a flat fill. */
+[data-theme="light"] .btn-primary {
+  background-image: linear-gradient(135deg, #5b45f5, #8b5cf6 52%, #0b84b8);
+  box-shadow: 0 10px 22px -10px rgba(91, 69, 245, 0.6);
+}
+
+/* The active nav item is a filled pill, not a faint tint that barely shows. */
+[data-theme="light"] nav button[aria-current="page"] {
+  background-color: rgba(91, 69, 245, 0.11);
+  box-shadow: inset 0 0 0 1px rgba(91, 69, 245, 0.22);
 }
 
 html,

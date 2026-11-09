@@ -18,7 +18,7 @@ import { Button, IconBtn, Notice, Spinner } from "./ui";
 type Status = "starting" | "live" | "stopped" | "error";
 
 function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void }) {
-  const { t, toast, fail, confirm, go, saveHistory, bumpData } = useApp();
+  const { t, toast, fail, confirm, go, saveHistory, bumpData, appLinks } = useApp();
   const { loadRaw } = useProject();
   const [idx, setIdx] = useState(0);
   const [reveal, setReveal] = useState(false);
@@ -46,16 +46,21 @@ function ResultPanel({ codes, onAgain }: { codes: string[]; onAgain: () => void 
   };
   const onOpen = async () => {
     if (!link.openable) return;
+    // Show the whole address, not just the host: the host is the part a fake
+    // gets right, and the path is where the damage usually is.
     const ok = await confirm({
       title: ["Open this link?", "فتح هذا الرابط؟"],
-      message: [`You are about to open: ${link.host || link.href}${link.warnings.length ? "\n\nWarning: " + link.warnings.map((w) => w[0]).join(" ") : ""}`, `ستقوم بفتح: ${link.host || link.href}${link.warnings.length ? "\n\nتحذير: " + link.warnings.map((w) => w[1]).join(" ") : ""}`],
+      message: [
+        `You are about to open:\n${link.href}${link.warnings.length ? "\n\nWarning: " + link.warnings.map((w) => w[0]).join(" ") : ""}`,
+        `ستقوم بفتح:\n${link.href}${link.warnings.length ? "\n\nتحذير: " + link.warnings.map((w) => w[1]).join(" ") : ""}`,
+      ],
       confirmLabel: ["Open", "فتح"],
       danger: link.warnings.length > 0,
     });
     if (!ok) return;
 
     // A link that belongs to an app opens there; otherwise the browser gets it.
-    const handoff = link.kind === "web" ? openInAppOrBrowser(link.href) : openExternal(link.href);
+    const handoff = link.kind === "web" ? openInAppOrBrowser(link.href, appLinks) : openExternal(link.href);
     if (handoff === "refused") {
       fail(new Error("link refused"));
       return;
