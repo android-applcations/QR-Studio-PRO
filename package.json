@@ -18,7 +18,8 @@
     "test:scan": "node scripts/scan-result-test.mjs",
     "test:update": "node scripts/update-badge-test.mjs",
     "test:payment": "node scripts/payment-test.mjs",
-    "test:handles": "node scripts/handle-test.mjs"
+    "test:handles": "node scripts/handle-test.mjs",
+    "test:polish": "node scripts/polish-test.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",

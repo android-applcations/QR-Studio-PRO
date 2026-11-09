@@ -705,7 +705,10 @@ const HOST_TYPES: [RegExp, string][] = [
 
 export function detectType(content: string): string {
   const s = content.trim();
-  const up = s.slice(0, 12).toUpperCase();
+  // Long enough for the longest prefix tested below: "BEGIN:VCALENDAR" is 15
+  // characters, and slicing 12 meant a calendar event was never recognised and
+  // came back as a wall of raw VCALENDAR text.
+  const up = s.slice(0, 16).toUpperCase();
   if (up.startsWith("WIFI:")) return "wifi";
   if (up.startsWith("BEGIN:VCARD")) return "vcard";
   if (up.startsWith("BEGIN:VCALEND") || up.startsWith("BEGIN:VEVENT")) return "event";

@@ -32,7 +32,7 @@ const TypeCard = memo(function TypeCard({ def, onPick }: { def: QrTypeDef; onPic
       onClick={(e) => onPick(def.id, e.currentTarget)}
       title={t(def.desc)}
       aria-label={`${t(def.title)} — ${t(def.desc)}`}
-      className="press cv-card card group flex aspect-square w-full flex-col items-center justify-center gap-2 px-1.5 py-3 text-center hover:border-brand/50"
+      className="press cv-card card group flex aspect-square w-full flex-col items-center justify-center gap-2 overflow-hidden px-1.5 py-3 text-center hover:border-brand/50"
     >
       <TypeIcon icon={def.icon} size={46} />
       <span className="line-clamp-2 w-full text-[12.5px] font-semibold leading-tight">{t(def.title)}</span>
